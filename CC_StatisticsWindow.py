@@ -15,16 +15,20 @@ import numpy as np
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QTabWidget, QScrollArea, QGroupBox, QGridLayout
+    QTabWidget, QScrollArea, QGroupBox, QGridLayout, QApplication
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QPixmap
 
 import matplotlib
 matplotlib.use('Qt5Agg')
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
+
+# Configure matplotlib for Chinese font support
+plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'Arial Unicode MS', 'DejaVu Sans']
+plt.rcParams['axes.unicode_minus'] = False  # Fix minus sign display
 
 logger = logging.getLogger("CC_Statistics")
 
@@ -332,48 +336,215 @@ class CC_StatisticsWindow(QWidget):
         """Plot lightness distribution comparison"""
         layout = parent_tab.layout()
 
-        canvas = MplCanvas(parent_tab, width=12, height=6)
-        toolbar = NavigationToolbar2QT(canvas, parent_tab)
-
-        ax = canvas.axes
-
         # Extract lightness distribution data if available
         photo_names = []
+        photo_paths = []  # Store full paths for hover tooltips
         low_values = []
         mid_values = []
         high_values = []
 
+        logger.info(f"Plotting lightness distribution for {len(self.stats_data)} photos")
+
         for i, data in enumerate(self.stats_data):
-            photo_names.append(data.get('photo_name', f"Photo {i+1}"))
-            low_values.append(data.get('lightness_low', 33.3))
-            mid_values.append(data.get('lightness_mid', 33.3))
-            high_values.append(data.get('lightness_high', 33.3))
+            # Get lightness distribution values first
+            low = data.get('lightness_low')
+            mid = data.get('lightness_mid')
+            high = data.get('lightness_high')
+
+            # Debug log for first few photos
+            if i < 3:
+                logger.info(f"Photo {i}: low={low}, mid={mid}, high={high}, type={type(low)}")
+
+            # Skip photos without valid data (None or 0.0 means old analysis)
+            if low is None or mid is None or high is None:
+                logger.warning(f"Photo {i}: Missing lightness data (None)")
+                continue
+
+            # Skip if all are 0.0 (old analysis without distribution data)
+            if low == 0.0 and mid == 0.0 and high == 0.0:
+                logger.warning(f"Photo {i}: Missing lightness data (all zeros)")
+                continue
+
+            # Try to convert to float
+            try:
+                low_val = float(low)
+                mid_val = float(mid)
+                high_val = float(high)
+            except (TypeError, ValueError) as e:
+                logger.error(f"Photo {i}: Cannot convert lightness data: {e}")
+                continue
+
+            # Only add to arrays if we successfully got the data
+            full_name = data.get('photo_name', f"Photo {i+1}")
+            file_path = data.get('file_path', '')
+            short_name = Path(full_name).stem[:15]  # First 15 chars, no extension
+            photo_names.append(short_name)
+            photo_paths.append(file_path)
+            low_values.append(low_val)
+            mid_values.append(mid_val)
+            high_values.append(high_val)
+
+        logger.info(f"Successfully extracted data for {len(photo_names)} photos")
+
+        if not photo_names:
+            # No valid data
+            error_label = QLabel("❌ No lightness distribution data available.\n\n"
+                                "Please re-analyze photos to generate this data.")
+            error_label.setStyleSheet("color: #666; font-size: 14px; padding: 40px;")
+            error_label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(error_label)
+            return
+
+        # If we have too many photos, show only a sample
+        max_photos_display = 50
+        if len(photo_names) > max_photos_display:
+            logger.info(f"Too many photos ({len(photo_names)}), sampling {max_photos_display}")
+            indices = np.linspace(0, len(photo_names) - 1, max_photos_display, dtype=int)
+            photo_names = [photo_names[i] for i in indices]
+            photo_paths = [photo_paths[i] for i in indices]
+            low_values = [low_values[i] for i in indices]
+            mid_values = [mid_values[i] for i in indices]
+            high_values = [high_values[i] for i in indices]
+
+        # Adjust canvas size based on number of photos
+        width = max(12, len(photo_names) * 0.3)
+        canvas = MplCanvas(parent_tab, width=width, height=6)
+        toolbar = NavigationToolbar2QT(canvas, parent_tab)
+
+        ax = canvas.axes
 
         # Create stacked bar chart
         x = np.arange(len(photo_names))
-        width = 0.8
+        width_bar = 0.8
 
-        ax.bar(x, low_values, width, label='Low (<33%)', color='#8B4513', alpha=0.8)
-        ax.bar(x, mid_values, width, bottom=low_values, label='Mid (33-67%)', color='#CD853F', alpha=0.8)
+        bars_low = ax.bar(x, low_values, width_bar, label='Low (<33%)', color='#8B4513', alpha=0.8)
+        bars_mid = ax.bar(x, mid_values, width_bar, bottom=low_values, label='Mid (33-67%)', color='#CD853F', alpha=0.8)
 
         # Calculate bottom for high values
         bottom_high = [l + m for l, m in zip(low_values, mid_values)]
-        ax.bar(x, high_values, width, bottom=bottom_high, label='High (>67%)', color='#F4A460', alpha=0.8)
+        bars_high = ax.bar(x, high_values, width_bar, bottom=bottom_high, label='High (>67%)', color='#F4A460', alpha=0.8)
 
         ax.set_xlabel('Photos', fontsize=12, weight='bold')
         ax.set_ylabel('Percentage (%)', fontsize=12, weight='bold')
-        ax.set_title('Lightness Distribution Comparison', fontsize=14, weight='bold', pad=20)
+        ax.set_title(f'Lightness Distribution Comparison ({len(photo_names)} photos)',
+                     fontsize=14, weight='bold', pad=20)
         ax.set_xticks(x)
-        ax.set_xticklabels(photo_names, rotation=45, ha='right')
+        ax.set_xticklabels(photo_names, rotation=60, ha='right', fontsize=8)
         ax.legend(loc='upper right', fontsize=10)
         ax.grid(True, alpha=0.3, linestyle='--', axis='y')
         ax.set_facecolor('#FAFAFA')
-        ax.set_ylim(0, 100)
+        ax.set_ylim(0, 105)  # Slightly more than 100 for visibility
+
+        # Add interactive hover tooltip with photo preview
+        self._add_hover_tooltip(canvas, ax, x, photo_names, photo_paths, bars_low, bars_mid, bars_high)
 
         canvas.figure.tight_layout()
 
         layout.addWidget(toolbar)
         layout.addWidget(canvas)
+
+    def _add_hover_tooltip(self, canvas, ax, x_positions, photo_names, photo_paths, bars_low, bars_mid, bars_high):
+        """Add interactive hover tooltip with photo preview using Qt tooltip"""
+        from PIL import Image
+
+        # Create a tooltip label (initially hidden)
+        tooltip_label = QLabel(canvas)
+        tooltip_label.setWindowFlags(Qt.ToolTip)
+        tooltip_label.setStyleSheet("""
+            QLabel {
+                background-color: white;
+                border: 2px solid #007AFF;
+                border-radius: 8px;
+                padding: 5px;
+            }
+        """)
+        tooltip_label.hide()
+
+        # Store current bar index
+        self.current_bar_index = None
+
+        def on_hover(event):
+            """Handle mouse hover event"""
+            if event.inaxes != ax:
+                # Mouse is outside the axes, hide tooltip
+                tooltip_label.hide()
+                self.current_bar_index = None
+                return
+
+            # Check which bar the mouse is over
+            hovered_bar = None
+            for idx, x_pos in enumerate(x_positions):
+                # Check if mouse is within the bar's x range
+                if abs(event.xdata - x_pos) < 0.4:  # width_bar/2
+                    hovered_bar = idx
+                    break
+
+            if hovered_bar is not None and hovered_bar != self.current_bar_index:
+                self.current_bar_index = hovered_bar
+                path = photo_paths[hovered_bar]
+                name = photo_names[hovered_bar]
+
+                # Try to load and display thumbnail
+                try:
+                    if path and Path(path).exists():
+                        # Load image
+                        img = Image.open(path)
+
+                        # Resize to thumbnail (300px for better face visibility)
+                        img.thumbnail((300, 300), Image.Resampling.LANCZOS)
+
+                        # Convert to RGB if needed
+                        if img.mode != 'RGB':
+                            img = img.convert('RGB')
+
+                        # Convert PIL Image to QPixmap
+                        from io import BytesIO
+                        buffer = BytesIO()
+                        img.save(buffer, format='PNG')
+                        buffer.seek(0)
+
+                        pixmap = QPixmap()
+                        pixmap.loadFromData(buffer.read())
+
+                        # Set pixmap to label
+                        tooltip_label.setPixmap(pixmap)
+
+                        # Position tooltip near the cursor but visible
+                        # Get cursor position in screen coordinates
+                        cursor_pos = canvas.mapToGlobal(canvas.mapFromParent(canvas.pos()))
+
+                        # Position to the right and slightly down from cursor
+                        tooltip_x = cursor_pos.x() + 20
+                        tooltip_y = cursor_pos.y() + 20
+
+                        # Make sure tooltip stays on screen
+                        screen_geometry = QApplication.primaryScreen().geometry()
+
+                        # Adjust if tooltip would go off screen
+                        if tooltip_x + pixmap.width() > screen_geometry.width():
+                            tooltip_x = cursor_pos.x() - pixmap.width() - 20
+                        if tooltip_y + pixmap.height() > screen_geometry.height():
+                            tooltip_y = screen_geometry.height() - pixmap.height() - 20
+
+                        tooltip_label.move(tooltip_x, tooltip_y)
+                        tooltip_label.show()
+                        tooltip_label.raise_()
+
+                        logger.debug(f"Showing thumbnail for: {name}")
+                    else:
+                        logger.warning(f"Photo not found: {path}")
+                        tooltip_label.hide()
+                except Exception as e:
+                    logger.error(f"Error loading thumbnail: {e}")
+                    tooltip_label.hide()
+            elif hovered_bar is None:
+                # Mouse is not over any bar
+                tooltip_label.hide()
+                self.current_bar_index = None
+
+        # Connect the hover event
+        canvas.mpl_connect('motion_notify_event', on_hover)
+        logger.info("Added hover tooltip functionality")
 
     def _export_report(self):
         """Export statistics report"""

@@ -90,6 +90,12 @@ class CC_BatchProcessingThread(QThread):
 
                     # Calculate statistics
                     if len(point_cloud) > 0:
+                        # Calculate lightness distribution
+                        lightness = point_cloud[:, 2]
+                        low_light = (lightness < 0.33).sum() / len(lightness) * 100
+                        mid_light = ((lightness >= 0.33) & (lightness < 0.67)).sum() / len(lightness) * 100
+                        high_light = (lightness >= 0.67).sum() / len(lightness) * 100
+
                         result = {
                             'path': photo_path,
                             'success': True,
@@ -99,6 +105,9 @@ class CC_BatchProcessingThread(QThread):
                             'hue_std': point_cloud[:, 0].std(),
                             'saturation_mean': point_cloud[:, 1].mean(),
                             'lightness_mean': point_cloud[:, 2].mean(),
+                            'lightness_low': low_light,
+                            'lightness_mid': mid_light,
+                            'lightness_high': high_light,
                             'point_cloud': point_cloud
                         }
                     else:
@@ -133,7 +142,7 @@ class CC_PhotoThumbnail(QFrame):
         self.thumbnail_label = QLabel()
         self.thumbnail_label.setFixedSize(210, 210)
         self.thumbnail_label.setAlignment(Qt.AlignCenter)
-        self.thumbnail_label.setStyleSheet("background-color: #2a2a2a; border: 1px solid #444;")
+        self.thumbnail_label.setStyleSheet("background-color: #ffffff; border: 1px solid #e5e5ea;")
 
         self._load_thumbnail()
 
@@ -141,7 +150,7 @@ class CC_PhotoThumbnail(QFrame):
         filename_label = QLabel(image_path.name)
         filename_label.setWordWrap(True)
         filename_label.setAlignment(Qt.AlignCenter)
-        filename_label.setStyleSheet("color: #ddd; font-size: 11px;")
+        filename_label.setStyleSheet("color: #000; font-size: 11px;")
         filename_label.setMaximumHeight(40)
 
         layout.addWidget(self.thumbnail_label)
@@ -149,12 +158,13 @@ class CC_PhotoThumbnail(QFrame):
 
         self.setStyleSheet("""
             CC_PhotoThumbnail {
-                background-color: #2e2e2e;
-                border: 2px solid #3a3a3a;
+                background-color: #ffffff;
+                border: 1px solid #e5e5ea;
                 border-radius: 8px;
             }
             CC_PhotoThumbnail:hover {
-                border: 2px solid #4ECDC4;
+                border: 2px solid #007aff;
+                background-color: #f5f5f7;
             }
         """)
 
@@ -174,7 +184,7 @@ class CC_PhotoThumbnail(QFrame):
                             img = Image.fromarray(rgb)
                 else:
                     pixmap = QPixmap(210, 210)
-                    pixmap.fill(QColor(42, 42, 42))
+                    pixmap.fill(QColor(245, 245, 245))
                     self.thumbnail_label.setPixmap(pixmap)
                     return
             else:
@@ -197,7 +207,7 @@ class CC_PhotoThumbnail(QFrame):
         except Exception as e:
             logger.error(f"Failed to load thumbnail: {e}")
             pixmap = QPixmap(210, 210)
-            pixmap.fill(QColor(80, 42, 42))
+            pixmap.fill(QColor(245, 245, 245))
             self.thumbnail_label.setPixmap(pixmap)
 
 

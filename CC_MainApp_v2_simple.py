@@ -82,33 +82,124 @@ class CC_MainWindow(QMainWindow):
         logger.info("ChromaCloud v2 (Simplified) GUI initialized")
 
     def _apply_theme(self):
-        """Apply dark theme"""
+        """Apply light macOS Photos-like theme"""
         palette = QPalette()
-        palette.setColor(QPalette.Window, QColor(30, 30, 30))
-        palette.setColor(QPalette.WindowText, QColor(220, 220, 220))
-        palette.setColor(QPalette.Base, QColor(42, 42, 42))
-        palette.setColor(QPalette.Text, QColor(220, 220, 220))
-        palette.setColor(QPalette.Button, QColor(50, 50, 50))
-        palette.setColor(QPalette.ButtonText, QColor(220, 220, 220))
-        palette.setColor(QPalette.Highlight, QColor(78, 205, 196))
-        palette.setColor(QPalette.HighlightedText, QColor(0, 0, 0))
+        # Clean white background like macOS Photos
+        palette.setColor(QPalette.Window, QColor(255, 255, 255))
+        palette.setColor(QPalette.WindowText, QColor(0, 0, 0))
+        palette.setColor(QPalette.Base, QColor(250, 250, 250))
+        palette.setColor(QPalette.AlternateBase, QColor(245, 245, 245))
+        palette.setColor(QPalette.Text, QColor(0, 0, 0))
+        palette.setColor(QPalette.Button, QColor(248, 248, 248))
+        palette.setColor(QPalette.ButtonText, QColor(0, 0, 0))
+        palette.setColor(QPalette.Highlight, QColor(0, 122, 255))  # macOS blue
+        palette.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
         self.setPalette(palette)
 
         self.setStyleSheet("""
-            QMainWindow { background-color: #1e1e1e; }
+            QMainWindow { 
+                background-color: #ffffff; 
+            }
             QPushButton {
-                background-color: #3a3a3a; border: 1px solid #555;
-                border-radius: 4px; padding: 8px 16px; color: #ddd;
+                background-color: #f8f8f8; 
+                border: 1px solid #d1d1d6;
+                border-radius: 6px; 
+                padding: 8px 16px; 
+                color: #000;
+                font-size: 11px;
             }
-            QPushButton:hover { background-color: #4a4a4a; border: 1px solid #4ECDC4; }
-            QLabel { color: #ddd; }
+            QPushButton:hover { 
+                background-color: #e8e8ed; 
+                border: 1px solid #007aff; 
+            }
+            QPushButton:pressed {
+                background-color: #d8d8dd;
+            }
+            QPushButton:disabled {
+                background-color: #f8f8f8;
+                color: #999;
+                border: 1px solid #e5e5ea;
+            }
+            QLabel { 
+                color: #000; 
+            }
             QTreeWidget {
-                background-color: #2a2a2a; border: 1px solid #3a3a3a;
-                border-radius: 4px; padding: 5px;
+                background-color: #fafafa; 
+                border: 1px solid #e5e5ea;
+                border-radius: 6px; 
+                padding: 5px;
+                color: #000;
             }
-            QTreeWidget::item { padding: 5px; }
-            QTreeWidget::item:hover { background-color: #3a3a3a; }
-            QTreeWidget::item:selected { background-color: #4ECDC4; color: black; }
+            QTreeWidget::item { 
+                padding: 6px; 
+                border-radius: 4px;
+            }
+            QTreeWidget::item:hover { 
+                background-color: #f0f0f5; 
+            }
+            QTreeWidget::item:selected { 
+                background-color: #007aff; 
+                color: white; 
+            }
+            QGroupBox {
+                border: 1px solid #e5e5ea;
+                border-radius: 8px;
+                margin-top: 12px;
+                padding-top: 12px;
+                font-weight: 500;
+                color: #000;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px 0 5px;
+                color: #666;
+            }
+            QProgressBar {
+                border: 1px solid #e5e5ea;
+                border-radius: 4px;
+                background-color: #f0f0f5;
+                text-align: center;
+                color: #000;
+            }
+            QProgressBar::chunk {
+                background-color: #007aff;
+                border-radius: 3px;
+            }
+            QScrollBar:vertical {
+                border: none;
+                background: #fafafa;
+                width: 12px;
+                margin: 0px;
+            }
+            QScrollBar::handle:vertical {
+                background: #c7c7cc;
+                border-radius: 6px;
+                min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #aeaeb2;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+            QScrollBar:horizontal {
+                border: none;
+                background: #fafafa;
+                height: 12px;
+                margin: 0px;
+            }
+            QScrollBar::handle:horizontal {
+                background: #c7c7cc;
+                border-radius: 6px;
+                min-width: 20px;
+            }
+            QScrollBar::handle:horizontal:hover {
+                background: #aeaeb2;
+            }
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                width: 0px;
+            }
         """)
 
     def _create_ui(self):
@@ -151,7 +242,7 @@ class CC_MainWindow(QMainWindow):
 
         # Header
         header = QLabel("📂 Albums")
-        header.setStyleSheet("font-size: 16px; font-weight: bold; color: #4ECDC4;")
+        header.setStyleSheet("font-size: 16px; font-weight: bold; color: #1d1d1f;")
         layout.addWidget(header)
 
         # Tree widget
@@ -178,7 +269,7 @@ class CC_MainWindow(QMainWindow):
         # Header
         header_layout = QHBoxLayout()
         self.photo_header = QLabel("📸 All Photos")
-        self.photo_header.setStyleSheet("font-size: 16px; font-weight: bold; color: #4ECDC4;")
+        self.photo_header.setStyleSheet("font-size: 16px; font-weight: bold; color: #1d1d1f;")
         header_layout.addWidget(self.photo_header)
         header_layout.addStretch()
 
@@ -214,7 +305,7 @@ class CC_MainWindow(QMainWindow):
         layout.setContentsMargins(10, 10, 10, 10)
 
         title = QLabel("🎨 Analysis")
-        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #4ECDC4;")
+        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #1d1d1f;")
         layout.addWidget(title)
 
         self.current_photo_label = QLabel("No photo selected")
@@ -231,7 +322,7 @@ class CC_MainWindow(QMainWindow):
         results_layout = QVBoxLayout(results_group)
         self.results_text = QLabel("Select a photo to analyze")
         self.results_text.setWordWrap(True)
-        self.results_text.setStyleSheet("color: #ddd; font-size: 11px; padding: 10px;")
+        self.results_text.setStyleSheet("color: #333; font-size: 11px; padding: 10px;")
         results_layout.addWidget(self.results_text)
         layout.addWidget(results_group)
 
@@ -240,7 +331,7 @@ class CC_MainWindow(QMainWindow):
         stats_layout = QVBoxLayout(stats_group)
         self.stats_text = QLabel("No data")
         self.stats_text.setWordWrap(True)
-        self.stats_text.setStyleSheet("color: #ddd; font-size: 11px; font-family: monospace; padding: 10px;")
+        self.stats_text.setStyleSheet("color: #333; font-size: 11px; font-family: monospace; padding: 10px;")
         stats_layout.addWidget(self.stats_text)
         layout.addWidget(stats_group)
 
@@ -442,12 +533,76 @@ class CC_MainWindow(QMainWindow):
         self._load_navigator()
 
     def _select_photo(self, photo_path: Path):
-        """Select a photo"""
+        """Select a photo and load existing analysis if available"""
         self.current_photo = photo_path
         # Show full path
         self.current_photo_label.setText(f"Selected:\n{str(photo_path)}")
         self.current_photo_label.setToolTip(str(photo_path))
         self.analyze_btn.setEnabled(True)
+
+        # Try to load existing analysis from database
+        try:
+            # Get photo ID
+            photo_id = self.db.add_photo(photo_path)  # This returns existing ID if photo exists
+
+            # Get analysis results
+            analysis = self.db.get_analysis(photo_id)
+
+            if analysis and analysis.get('face_detected'):
+                logger.info(f"Loading existing analysis for: {photo_path.name}")
+
+                # Display results
+                num_points = analysis.get('num_points', 0)
+                mask_coverage = analysis.get('mask_coverage', 0)
+                h_mean = analysis.get('hue_mean', 0)
+                h_std = analysis.get('hue_std', 0)
+                s_mean = analysis.get('saturation_mean', 0)
+                l_mean = analysis.get('lightness_mean', 0)
+                low_light = analysis.get('lightness_low', 0)
+                mid_light = analysis.get('lightness_mid', 0)
+                high_light = analysis.get('lightness_high', 0)
+
+                self.results_text.setText(
+                    f"✓ Face detected! (from database)\n{num_points:,} points\nCoverage: {mask_coverage * 100:.1f}%"
+                )
+
+                self.stats_text.setText(
+                    f"Hue: {h_mean:.1f}° ± {h_std:.1f}°\n"
+                    f"Sat: {s_mean * 100:.1f}%\n"
+                    f"Light: {l_mean * 100:.1f}%\n\n"
+                    f"📊 Lightness Distribution:\n"
+                    f"  Low  (<33%): {low_light:.1f}%\n"
+                    f"  Mid (33-67%): {mid_light:.1f}%\n"
+                    f"  High (>67%): {high_light:.1f}%"
+                )
+
+                # Load point cloud data if available
+                point_cloud_data = analysis.get('point_cloud_data')
+                if point_cloud_data:
+                    self.point_cloud = pickle.loads(point_cloud_data)
+                    # Try to load the image for visualization
+                    try:
+                        image_rgb = self.processor._load_image(photo_path)
+                        self.current_photo_rgb = image_rgb
+                        # Process to get mask
+                        _, mask = self.processor.process_image(image_rgb, return_mask=True)
+                        self.current_mask = mask
+                        self.visualize_btn.setEnabled(True)
+                        logger.info("Loaded point cloud and image for visualization")
+                    except Exception as e:
+                        logger.warning(f"Could not load image for visualization: {e}")
+                        self.visualize_btn.setEnabled(False)
+                else:
+                    self.visualize_btn.setEnabled(False)
+            else:
+                # No analysis data, reset display
+                self.results_text.setText("Select a photo to analyze")
+                self.stats_text.setText("No data")
+                self.visualize_btn.setEnabled(False)
+
+        except Exception as e:
+            logger.error(f"Error loading analysis: {e}")
+            # Don't show error to user, just keep the selection
 
     def _analyze_photo(self):
         """Analyze selected photo"""
@@ -570,6 +725,14 @@ class CC_MainWindow(QMainWindow):
             if result['success']:
                 try:
                     photo_id = self.db.add_photo(result['path'])
+
+                    # Get lightness distribution values
+                    low = result.get('lightness_low', 33.3)
+                    mid = result.get('lightness_mid', 33.3)
+                    high = result.get('lightness_high', 33.3)
+
+                    logger.info(f"Saving {result['path'].name}: low={low:.1f}, mid={mid:.1f}, high={high:.1f}")
+
                     analysis_data = {
                         'face_detected': True,
                         'num_points': result['num_points'],
@@ -577,7 +740,10 @@ class CC_MainWindow(QMainWindow):
                         'hue_mean': result['hue_mean'],
                         'hue_std': result['hue_std'],
                         'saturation_mean': result['saturation_mean'],
-                        'lightness_mean': result['lightness_mean']
+                        'lightness_mean': result['lightness_mean'],
+                        'lightness_low': low,
+                        'lightness_mid': mid,
+                        'lightness_high': high
                     }
                     point_cloud_bytes = pickle.dumps(result['point_cloud'])
                     self.db.save_analysis(photo_id, analysis_data, point_cloud_bytes)
@@ -595,6 +761,13 @@ class CC_MainWindow(QMainWindow):
         if not detailed_stats or len(detailed_stats) == 0:
             QMessageBox.information(self, f"Album: {data['name']}", "No analysis data available.\n\nPlease analyze some photos first.")
             return
+
+        # Debug: Log first few records to see what data we have
+        logger.info(f"Retrieved {len(detailed_stats)} records from database")
+        if len(detailed_stats) > 0:
+            first = detailed_stats[0]
+            logger.info(f"First record keys: {first.keys()}")
+            logger.info(f"First record sample: low={first.get('lightness_low')}, mid={first.get('lightness_mid')}, high={first.get('lightness_high')}")
 
         # Open advanced statistics window
         from CC_StatisticsWindow import CC_StatisticsWindow

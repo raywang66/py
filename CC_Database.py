@@ -278,12 +278,16 @@ class CC_Database:
         """Save analysis results for a photo"""
         cursor = self.conn.cursor()
 
+        # Delete old analysis results for this photo to avoid duplicates
+        cursor.execute("DELETE FROM analysis_results WHERE photo_id = ?", (photo_id,))
+
         # Ensure all numeric values are properly typed
         cursor.execute("""
             INSERT INTO analysis_results (
                 photo_id, face_detected, num_points, mask_coverage,
-                hue_mean, hue_std, saturation_mean, lightness_mean, point_cloud_data
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                hue_mean, hue_std, saturation_mean, lightness_mean, 
+                lightness_low, lightness_mid, lightness_high, point_cloud_data
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             int(photo_id),
             bool(results.get('face_detected', False)),
@@ -293,6 +297,9 @@ class CC_Database:
             float(results.get('hue_std', 0.0)),
             float(results.get('saturation_mean', 0.0)),
             float(results.get('lightness_mean', 0.0)),
+            float(results.get('lightness_low', 0.0)),
+            float(results.get('lightness_mid', 0.0)),
+            float(results.get('lightness_high', 0.0)),
             point_cloud
         ))
         self.conn.commit()
@@ -339,6 +346,9 @@ class CC_Database:
                 ar.hue_std,
                 ar.saturation_mean,
                 ar.lightness_mean,
+                ar.lightness_low,
+                ar.lightness_mid,
+                ar.lightness_high,
                 ar.num_points,
                 ar.mask_coverage,
                 ar.analyzed_at
