@@ -1,0 +1,23 @@
+# Skin Color Matcher Requirements
+# CUDA 12.8 compatible versions for RTX 3050 Ti
+
+# Deep Learning
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Image Processing
+opencv-python>=4.8.0
+Pillow>=10.0.0
+rawpy>=0.18.0
+
+# Scientific Computing
+numpy>=1.24.0
+scipy>=1.11.0
+
+# Visualization
+matplotlib>=3.7.0
+
+# Optional: Face Parsing Model (BiSeNet)
+# Install from: https://github.com/zllrunning/face-parsing.PyTorch
+# Or use: pip install face-parsing
+

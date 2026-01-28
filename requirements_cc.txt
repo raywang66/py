@@ -1,0 +1,69 @@
+# ChromaCloud (CC) - Requirements
+
+# ============================================================================
+# INSTALLATION INSTRUCTIONS
+# ============================================================================
+# For GPU acceleration (REQUIRED for production performance):
+#
+# 1. Check your CUDA version:
+#    nvidia-smi
+#
+# 2. Install PyTorch with CUDA support (DO NOT use this requirements.txt directly):
+#
+#    For CUDA 12.1:
+#    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+#
+#    For CUDA 11.8:
+#    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+#
+#    For CPU only (NOT RECOMMENDED):
+#    pip install torch torchvision
+#
+# 3. Then install remaining dependencies:
+#    pip install -r requirements_cc.txt
+#
+# OR use the automated install script: python install_cc.py
+
+# ============================================================================
+# CORE FRAMEWORK
+# ============================================================================
+PySide6>=6.6.0              # Qt6 for modern desktop UI
+PySide6-Addons>=6.6.0       # Additional Qt modules
+
+# ============================================================================
+# AI & COMPUTER VISION
+# ============================================================================
+# torch>=2.0.0              # INSTALL SEPARATELY with CUDA support (see above)
+# torchvision>=0.15.0       # INSTALL SEPARATELY with CUDA support (see above)
+mediapipe>=0.10.0           # Google MediaPipe for face detection (replaces BiSeNet)
+opencv-python>=4.8.0        # Image processing
+Pillow>=10.0.0              # Image I/O
+
+# ============================================================================
+# GPU COMPUTING
+# ============================================================================
+taichi>=1.6.0               # High-performance GPU computing for 3D rendering
+
+# ============================================================================
+# RAW FILE SUPPORT
+# ============================================================================
+rawpy>=0.18.0               # RAW file processing (ARW, CR2, NEF)
+imageio>=2.31.0             # Image I/O backend
+
+# ============================================================================
+# SCIENTIFIC COMPUTING
+# ============================================================================
+numpy>=1.24.0               # Numerical arrays
+scipy>=1.11.0               # Scientific algorithms
+
+# ============================================================================
+# DATABASE
+# ============================================================================
+# SQLite is included in Python standard library
+
+# ============================================================================
+# DEVELOPMENT TOOLS (Optional)
+# ============================================================================
+pytest>=7.4.0               # Unit testing
+black>=23.0.0               # Code formatting
+mypy>=1.5.0                 # Type checking

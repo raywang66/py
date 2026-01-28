@@ -1,0 +1,116 @@
+2026-01-19 20:41:25,735 - SkinColorMatcher - INFO - CUDA Device: NVIDIA GeForce RTX 3050 Ti Laptop GPU
+2026-01-19 20:41:25,736 - SkinColorMatcher - INFO - CUDA Memory: 4.29 GB
+2026-01-19 20:41:25,736 - SkinColorMatcher - INFO - Device configured: cuda
+2026-01-19 20:41:25,736 - SkinColorMatcher - INFO - Loading face parsing model...
+2026-01-19 20:41:25,751 - SkinColorMatcher - INFO - Face parsing model loaded successfully
+2026-01-19 23:36:21,337 - SkinColorMatcher - INFO - CUDA Device: NVIDIA GeForce RTX 3050 Ti Laptop GPU
+2026-01-19 23:36:21,337 - SkinColorMatcher - INFO - CUDA Memory: 4.29 GB
+2026-01-19 23:36:21,337 - SkinColorMatcher - INFO - Device configured: cuda
+2026-01-19 23:36:21,342 - SkinColorMatcher - INFO - Loading face parsing model...
+2026-01-19 23:36:21,352 - SkinColorMatcher - INFO - Face parsing model loaded successfully
+2026-01-19 23:40:55,738 - SkinColorMatcher - INFO - CUDA Device: NVIDIA GeForce RTX 3050 Ti Laptop GPU
+2026-01-19 23:40:55,739 - SkinColorMatcher - INFO - CUDA Memory: 4.29 GB
+2026-01-19 23:40:55,739 - SkinColorMatcher - INFO - Device configured: cuda
+2026-01-19 23:40:55,739 - SkinColorMatcher - INFO - Loading face parsing model...
+2026-01-19 23:40:55,808 - SkinColorMatcher - INFO - Face parsing model loaded successfully
+2026-01-19 23:40:55,808 - SkinColorMatcher - INFO - ================================================================================
+2026-01-19 23:40:55,809 - SkinColorMatcher - INFO - SKIN COLOR MATCHING ANALYSIS STARTED
+2026-01-19 23:40:55,809 - SkinColorMatcher - INFO - ================================================================================
+2026-01-19 23:40:55,809 - SkinColorMatcher - INFO - Loading reference image: reference_portrait.jpg
+2026-01-19 23:40:55,809 - SkinColorMatcher - ERROR - Failed to load reference image: [Errno 2] No such file or directory: 'C:\\Users\\rwang\\lc_sln\\py\\reference_portrait.jpg'
+2026-01-19 23:40:55,809 - SkinColorMatcher - ERROR - Analysis failed: [Errno 2] No such file or directory: 'C:\\Users\\rwang\\lc_sln\\py\\reference_portrait.jpg'
+Traceback (most recent call last):
+  File "C:\Users\rwang\lc_sln\py\skin_color_matcher.py", line 677, in analyze
+    ref_img = self.load_reference_image(reference_path)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\rwang\lc_sln\py\skin_color_matcher.py", line 205, in load_reference_image
+    img = Image.open(image_path).convert('RGB')
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\rwang\AppData\Roaming\Python\Python312\site-packages\PIL\Image.py", line 3431, in open
+    fp = builtins.open(filename, "rb")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'C:\\Users\\rwang\\lc_sln\\py\\reference_portrait.jpg'
+2026-01-24 01:12:07,295 - SkinColorMatcher - INFO - CUDA Device: NVIDIA GeForce RTX 3050 Ti Laptop GPU
+2026-01-24 01:12:07,295 - SkinColorMatcher - INFO - CUDA Memory: 4.29 GB
+2026-01-24 01:12:07,295 - SkinColorMatcher - INFO - Device configured: cuda
+2026-01-24 01:12:07,295 - SkinColorMatcher - INFO - Loading face parsing model...
+2026-01-24 01:12:07,305 - SkinColorMatcher - INFO - Face parsing model loaded successfully
+2026-01-24 01:12:44,540 - SkinColorMatcher - INFO - CUDA Device: NVIDIA GeForce RTX 3050 Ti Laptop GPU
+2026-01-24 01:12:44,540 - SkinColorMatcher - INFO - CUDA Memory: 4.29 GB
+2026-01-24 01:12:44,540 - SkinColorMatcher - INFO - Device configured: cuda
+2026-01-24 01:12:44,540 - SkinColorMatcher - INFO - Loading face parsing model...
+2026-01-24 01:12:44,666 - SkinColorMatcher - INFO - Face parsing model loaded successfully
+2026-01-24 01:12:44,666 - SkinColorMatcher - INFO - ================================================================================
+2026-01-24 01:12:44,666 - SkinColorMatcher - INFO - SKIN COLOR MATCHING ANALYSIS STARTED
+2026-01-24 01:12:44,666 - SkinColorMatcher - INFO - ================================================================================
+2026-01-24 01:12:44,666 - SkinColorMatcher - INFO - Loading reference image: reference_portrait.jpg
+2026-01-24 01:12:44,666 - SkinColorMatcher - ERROR - Failed to load reference image: [Errno 2] No such file or directory: 'C:\\Users\\rwang\\lc_sln\\py\\reference_portrait.jpg'
+2026-01-24 01:12:44,666 - SkinColorMatcher - ERROR - Analysis failed: [Errno 2] No such file or directory: 'C:\\Users\\rwang\\lc_sln\\py\\reference_portrait.jpg'
+Traceback (most recent call last):
+  File "C:\Users\rwang\lc_sln\py\skin_color_matcher.py", line 677, in analyze
+    ref_img = self.load_reference_image(reference_path)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\rwang\lc_sln\py\skin_color_matcher.py", line 205, in load_reference_image
+    img = Image.open(image_path).convert('RGB')
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\rwang\AppData\Roaming\Python\Python312\site-packages\PIL\Image.py", line 3431, in open
+    fp = builtins.open(filename, "rb")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'C:\\Users\\rwang\\lc_sln\\py\\reference_portrait.jpg'
+2026-01-24 01:14:51,954 - SkinColorMatcher - INFO - CUDA Device: NVIDIA GeForce RTX 3050 Ti Laptop GPU
+2026-01-24 01:14:51,954 - SkinColorMatcher - INFO - CUDA Memory: 4.29 GB
+2026-01-24 01:14:51,954 - SkinColorMatcher - INFO - Device configured: cuda
+2026-01-24 01:14:51,954 - SkinColorMatcher - INFO - Loading face parsing model...
+2026-01-24 01:14:52,048 - SkinColorMatcher - INFO - Face parsing model loaded successfully
+2026-01-24 01:14:58,015 - SkinColorMatcher - INFO - ================================================================================
+2026-01-24 01:14:58,015 - SkinColorMatcher - INFO - SKIN COLOR MATCHING ANALYSIS STARTED
+2026-01-24 01:14:58,015 - SkinColorMatcher - INFO - ================================================================================
+2026-01-24 01:14:58,015 - SkinColorMatcher - INFO - Loading reference image: reference_portrait.jpg
+2026-01-24 01:14:58,025 - SkinColorMatcher - ERROR - Failed to load reference image: [Errno 2] No such file or directory: 'C:\\Users\\rwang\\lc_sln\\py\\reference_portrait.jpg'
+2026-01-24 01:14:58,025 - SkinColorMatcher - ERROR - Analysis failed: [Errno 2] No such file or directory: 'C:\\Users\\rwang\\lc_sln\\py\\reference_portrait.jpg'
+Traceback (most recent call last):
+  File "C:\Users\rwang\lc_sln\py\skin_color_matcher.py", line 677, in analyze
+    ref_img = self.load_reference_image(reference_path)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\rwang\lc_sln\py\skin_color_matcher.py", line 205, in load_reference_image
+    img = Image.open(image_path).convert('RGB')
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\rwang\AppData\Roaming\Python\Python312\site-packages\PIL\Image.py", line 3431, in open
+    fp = builtins.open(filename, "rb")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'C:\\Users\\rwang\\lc_sln\\py\\reference_portrait.jpg'
+2026-01-24 01:15:42,378 - SkinColorMatcher - INFO - CUDA Device: NVIDIA GeForce RTX 3050 Ti Laptop GPU
+2026-01-24 01:15:42,378 - SkinColorMatcher - INFO - CUDA Memory: 4.29 GB
+2026-01-24 01:15:42,378 - SkinColorMatcher - INFO - Device configured: cuda
+2026-01-24 01:15:42,378 - SkinColorMatcher - INFO - Loading face parsing model...
+2026-01-24 01:15:42,458 - SkinColorMatcher - INFO - Face parsing model loaded successfully
+2026-01-24 01:15:42,458 - SkinColorMatcher - INFO - ================================================================================
+2026-01-24 01:15:42,458 - SkinColorMatcher - INFO - SKIN COLOR MATCHING ANALYSIS STARTED
+2026-01-24 01:15:42,458 - SkinColorMatcher - INFO - ================================================================================
+2026-01-24 01:15:42,458 - SkinColorMatcher - INFO - Loading reference image: Photos\IMG_2571.JPG
+2026-01-24 01:15:42,508 - SkinColorMatcher - INFO - Reference image loaded: (1416, 912, 3)
+2026-01-24 01:15:42,508 - SkinColorMatcher - INFO - Loading RAW image: Photos\DSC05171.ARW
+2026-01-24 01:15:46,462 - SkinColorMatcher - INFO - Applying Gamma 2.2 correction to RAW data
+2026-01-24 01:15:49,095 - SkinColorMatcher - INFO - RAW image processed: (6376, 9568, 3)
+2026-01-24 01:15:49,095 - SkinColorMatcher - INFO - Extracting skin mask with face parsing model...
+2026-01-24 01:15:49,146 - SkinColorMatcher - INFO - CUDA Memory allocated: 19.29 MB
+2026-01-24 01:15:49,425 - SkinColorMatcher - INFO - Skin mask extracted: 1260662 pixels (97.62%)
+2026-01-24 01:15:49,425 - SkinColorMatcher - INFO - Extracting skin mask with face parsing model...
+2026-01-24 01:15:49,706 - SkinColorMatcher - INFO - CUDA Memory allocated: 735.86 MB
+2026-01-24 01:15:50,309 - SkinColorMatcher - INFO - Skin mask extracted: 60845411 pixels (99.74%)
+2026-01-24 01:15:50,309 - SkinColorMatcher - INFO - Computing color statistics...
+2026-01-24 01:15:50,490 - SkinColorMatcher - INFO - Shadow region: 182911 pixels
+2026-01-24 01:15:50,490 - SkinColorMatcher - INFO - Color statistics computed for 1260662 pixels
+2026-01-24 01:15:50,490 - SkinColorMatcher - INFO - HSL Mean: H=195.9°, S=0.304, L=0.592
+2026-01-24 01:15:50,490 - SkinColorMatcher - INFO - Computing color statistics...
+2026-01-24 01:16:00,974 - SkinColorMatcher - INFO - Shadow region: 19584053 pixels
+2026-01-24 01:16:00,974 - SkinColorMatcher - INFO - Color statistics computed for 60845411 pixels
+2026-01-24 01:16:00,974 - SkinColorMatcher - INFO - HSL Mean: H=85.9°, S=0.150, L=0.257
+2026-01-24 01:16:01,100 - SkinColorMatcher - INFO - Computing Lightroom adjustment parameters...
+2026-01-24 01:16:01,100 - SkinColorMatcher - INFO - Delta H: 110.00°, Delta S: 0.154, Delta L: 0.335
+2026-01-24 01:16:01,100 - SkinColorMatcher - INFO - Lightroom adjustments computed successfully
+2026-01-24 01:16:01,100 - SkinColorMatcher - INFO - Generating visualization...
+2026-01-24 01:16:15,720 - SkinColorMatcher - INFO - Visualization saved to: output\skin_color_analysis.png
+2026-01-24 01:21:37,417 - SkinColorMatcher - INFO - ================================================================================
+2026-01-24 01:21:37,417 - SkinColorMatcher - INFO - ANALYSIS COMPLETED SUCCESSFULLY
+2026-01-24 01:21:37,417 - SkinColorMatcher - INFO - ================================================================================
