@@ -131,8 +131,8 @@ class CC_PhotoThumbnail(QFrame):
     def __init__(self, image_path: Path, parent=None):
         super().__init__(parent)
         self.image_path = image_path
-        self.setFrameStyle(QFrame.Box | QFrame.Raised)
-        self.setLineWidth(1)
+        self.setFrameStyle(QFrame.NoFrame)  # Remove frame
+        self.setLineWidth(0)
         self.setFixedSize(220, 270)
 
         layout = QVBoxLayout(self)
@@ -142,7 +142,7 @@ class CC_PhotoThumbnail(QFrame):
         self.thumbnail_label = QLabel()
         self.thumbnail_label.setFixedSize(210, 210)
         self.thumbnail_label.setAlignment(Qt.AlignCenter)
-        self.thumbnail_label.setStyleSheet("background-color: #ffffff; border: 1px solid #e5e5ea;")
+        self.thumbnail_label.setStyleSheet("background-color: transparent; border: none;")  # No border
 
         self._load_thumbnail()
 
@@ -150,21 +150,20 @@ class CC_PhotoThumbnail(QFrame):
         filename_label = QLabel(image_path.name)
         filename_label.setWordWrap(True)
         filename_label.setAlignment(Qt.AlignCenter)
-        filename_label.setStyleSheet("color: #000; font-size: 11px;")
+        filename_label.setStyleSheet("color: #000; font-size: 11px; background-color: transparent;")
         filename_label.setMaximumHeight(40)
 
         layout.addWidget(self.thumbnail_label)
         layout.addWidget(filename_label)
 
+        # macOS Photos style - no borders, clean look
         self.setStyleSheet("""
             CC_PhotoThumbnail {
-                background-color: #ffffff;
-                border: 1px solid #e5e5ea;
-                border-radius: 8px;
+                background-color: transparent;
+                border: none;
             }
             CC_PhotoThumbnail:hover {
-                border: 2px solid #007aff;
-                background-color: #f5f5f7;
+                background-color: transparent;
             }
         """)
 

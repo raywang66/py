@@ -60,6 +60,7 @@ class CC_MainWindow(QMainWindow):
         self.point_cloud: Optional[np.ndarray] = None
         self.current_photo_rgb: Optional[np.ndarray] = None
         self.current_mask: Optional[np.ndarray] = None
+        self.dark_mode: bool = False  # Light mode by default
 
         # 3D Renderer
         self.renderer_3d = None
@@ -76,131 +77,315 @@ class CC_MainWindow(QMainWindow):
         self.setMinimumSize(1200, 700)
 
         self._apply_theme()
+        self._create_menu()
         self._create_ui()
         self._load_navigator()
 
         logger.info("ChromaCloud v2 (Simplified) GUI initialized")
 
     def _apply_theme(self):
-        """Apply light macOS Photos-like theme"""
+        """Apply macOS Photos-like theme (Light or Dark mode)"""
         palette = QPalette()
-        # Clean white background like macOS Photos
-        palette.setColor(QPalette.Window, QColor(255, 255, 255))
-        palette.setColor(QPalette.WindowText, QColor(0, 0, 0))
-        palette.setColor(QPalette.Base, QColor(250, 250, 250))
-        palette.setColor(QPalette.AlternateBase, QColor(245, 245, 245))
-        palette.setColor(QPalette.Text, QColor(0, 0, 0))
-        palette.setColor(QPalette.Button, QColor(248, 248, 248))
-        palette.setColor(QPalette.ButtonText, QColor(0, 0, 0))
-        palette.setColor(QPalette.Highlight, QColor(0, 122, 255))  # macOS blue
-        palette.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
+
+        if self.dark_mode:
+            # Dark Mode - matching macOS Photos dark theme
+            bg_color = QColor(0, 0, 0)  # Pure black background
+            sidebar_bg = QColor(28, 28, 28)  # Dark gray sidebar
+            text_color = QColor(255, 255, 255)  # White text
+            secondary_text = QColor(152, 152, 157)  # Gray text
+            button_bg = QColor(48, 48, 48)
+            button_hover = QColor(60, 60, 60)
+            accent_blue = QColor(10, 132, 255)  # macOS blue
+
+            palette.setColor(QPalette.Window, bg_color)
+            palette.setColor(QPalette.WindowText, text_color)
+            palette.setColor(QPalette.Base, QColor(18, 18, 18))
+            palette.setColor(QPalette.AlternateBase, QColor(28, 28, 28))
+            palette.setColor(QPalette.Text, text_color)
+            palette.setColor(QPalette.Button, button_bg)
+            palette.setColor(QPalette.ButtonText, text_color)
+            palette.setColor(QPalette.Highlight, accent_blue)
+            palette.setColor(QPalette.HighlightedText, text_color)
+
+            self.setStyleSheet(f"""
+                QMainWindow {{ 
+                    background-color: #000000; 
+                }}
+                QWidget {{
+                    background-color: #000000;
+                    color: #ffffff;
+                }}
+                QPushButton {{
+                    background-color: #303030;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 8px 16px;
+                    color: #ffffff;
+                    font-size: 11px;
+                }}
+                QPushButton:hover {{ 
+                    background-color: #3c3c3c;
+                }}
+                QPushButton:pressed {{
+                    background-color: #282828;
+                }}
+                QPushButton:disabled {{
+                    background-color: #202020;
+                    color: #666666;
+                }}
+                QLabel {{ 
+                    color: #ffffff;
+                    background-color: transparent;
+                }}
+                QTreeWidget {{
+                    background-color: #1c1c1c;
+                    border: none;
+                    border-radius: 0px;
+                    padding: 5px;
+                    color: #ffffff;
+                }}
+                QTreeWidget::item {{ 
+                    padding: 6px;
+                    border-radius: 4px;
+                    background-color: transparent;
+                }}
+                QTreeWidget::item:hover {{ 
+                    background-color: #2c2c2c;
+                }}
+                QTreeWidget::item:selected {{ 
+                    background-color: #0a84ff;
+                    color: #ffffff;
+                }}
+                QGroupBox {{
+                    border: 1px solid #2c2c2c;
+                    border-radius: 8px;
+                    margin-top: 12px;
+                    padding-top: 12px;
+                    font-weight: 500;
+                    color: #ffffff;
+                    background-color: transparent;
+                }}
+                QGroupBox::title {{
+                    subcontrol-origin: margin;
+                    left: 10px;
+                    padding: 0 5px 0 5px;
+                    color: #98989d;
+                }}
+                QProgressBar {{
+                    border: 1px solid #2c2c2c;
+                    border-radius: 4px;
+                    background-color: #1c1c1c;
+                    text-align: center;
+                    color: #ffffff;
+                }}
+                QProgressBar::chunk {{
+                    background-color: #0a84ff;
+                    border-radius: 3px;
+                }}
+                QScrollArea {{
+                    border: none;
+                    background-color: #000000;
+                }}
+                QScrollBar:vertical {{
+                    border: none;
+                    background: #000000;
+                    width: 12px;
+                    margin: 0px;
+                }}
+                QScrollBar::handle:vertical {{
+                    background: #3a3a3c;
+                    border-radius: 6px;
+                    min-height: 20px;
+                }}
+                QScrollBar::handle:vertical:hover {{
+                    background: #4a4a4c;
+                }}
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                    height: 0px;
+                }}
+                QScrollBar:horizontal {{
+                    border: none;
+                    background: #000000;
+                    height: 12px;
+                    margin: 0px;
+                }}
+                QScrollBar::handle:horizontal {{
+                    background: #3a3a3c;
+                    border-radius: 6px;
+                    min-width: 20px;
+                }}
+                QScrollBar::handle:horizontal:hover {{
+                    background: #4a4a4c;
+                }}
+                QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+                    width: 0px;
+                }}
+                QFrame {{
+                    background-color: transparent;
+                }}
+            """)
+        else:
+            # Light Mode - matching macOS Photos light theme
+            bg_color = QColor(255, 255, 255)  # Pure white background
+            sidebar_bg = QColor(246, 246, 246)  # Light gray sidebar
+            text_color = QColor(0, 0, 0)  # Black text
+            secondary_text = QColor(142, 142, 147)  # Gray text
+            button_bg = QColor(248, 248, 248)
+            button_hover = QColor(235, 235, 235)
+            accent_blue = QColor(0, 122, 255)  # macOS blue
+
+            palette.setColor(QPalette.Window, bg_color)
+            palette.setColor(QPalette.WindowText, text_color)
+            palette.setColor(QPalette.Base, QColor(250, 250, 250))
+            palette.setColor(QPalette.AlternateBase, QColor(245, 245, 245))
+            palette.setColor(QPalette.Text, text_color)
+            palette.setColor(QPalette.Button, button_bg)
+            palette.setColor(QPalette.ButtonText, text_color)
+            palette.setColor(QPalette.Highlight, accent_blue)
+            palette.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
+
+            self.setStyleSheet(f"""
+                QMainWindow {{ 
+                    background-color: #ffffff; 
+                }}
+                QWidget {{
+                    background-color: #ffffff;
+                    color: #000000;
+                }}
+                QPushButton {{
+                    background-color: #f8f8f8;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 8px 16px;
+                    color: #000000;
+                    font-size: 11px;
+                }}
+                QPushButton:hover {{ 
+                    background-color: #ebebeb;
+                }}
+                QPushButton:pressed {{
+                    background-color: #d8d8d8;
+                }}
+                QPushButton:disabled {{
+                    background-color: #f8f8f8;
+                    color: #999999;
+                }}
+                QLabel {{ 
+                    color: #000000;
+                    background-color: transparent;
+                }}
+                QTreeWidget {{
+                    background-color: #f6f6f6;
+                    border: none;
+                    border-radius: 0px;
+                    padding: 5px;
+                    color: #000000;
+                }}
+                QTreeWidget::item {{ 
+                    padding: 6px;
+                    border-radius: 4px;
+                    background-color: transparent;
+                }}
+                QTreeWidget::item:hover {{ 
+                    background-color: #e8e8e8;
+                }}
+                QTreeWidget::item:selected {{ 
+                    background-color: #007aff;
+                    color: #ffffff;
+                }}
+                QGroupBox {{
+                    border: 1px solid #e5e5e5;
+                    border-radius: 8px;
+                    margin-top: 12px;
+                    padding-top: 12px;
+                    font-weight: 500;
+                    color: #000000;
+                    background-color: transparent;
+                }}
+                QGroupBox::title {{
+                    subcontrol-origin: margin;
+                    left: 10px;
+                    padding: 0 5px 0 5px;
+                    color: #8e8e93;
+                }}
+                QProgressBar {{
+                    border: 1px solid #e5e5e5;
+                    border-radius: 4px;
+                    background-color: #f0f0f0;
+                    text-align: center;
+                    color: #000000;
+                }}
+                QProgressBar::chunk {{
+                    background-color: #007aff;
+                    border-radius: 3px;
+                }}
+                QScrollArea {{
+                    border: none;
+                    background-color: #ffffff;
+                }}
+                QScrollBar:vertical {{
+                    border: none;
+                    background: #ffffff;
+                    width: 12px;
+                    margin: 0px;
+                }}
+                QScrollBar::handle:vertical {{
+                    background: #c7c7cc;
+                    border-radius: 6px;
+                    min-height: 20px;
+                }}
+                QScrollBar::handle:vertical:hover {{
+                    background: #aeaeb2;
+                }}
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                    height: 0px;
+                }}
+                QScrollBar:horizontal {{
+                    border: none;
+                    background: #ffffff;
+                    height: 12px;
+                    margin: 0px;
+                }}
+                QScrollBar::handle:horizontal {{
+                    background: #c7c7cc;
+                    border-radius: 6px;
+                    min-width: 20px;
+                }}
+                QScrollBar::handle:horizontal:hover {{
+                    background: #aeaeb2;
+                }}
+                QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+                    width: 0px;
+                }}
+                QFrame {{
+                    background-color: transparent;
+                }}
+            """)
+
         self.setPalette(palette)
 
-        self.setStyleSheet("""
-            QMainWindow { 
-                background-color: #ffffff; 
-            }
-            QPushButton {
-                background-color: #f8f8f8; 
-                border: 1px solid #d1d1d6;
-                border-radius: 6px; 
-                padding: 8px 16px; 
-                color: #000;
-                font-size: 11px;
-            }
-            QPushButton:hover { 
-                background-color: #e8e8ed; 
-                border: 1px solid #007aff; 
-            }
-            QPushButton:pressed {
-                background-color: #d8d8dd;
-            }
-            QPushButton:disabled {
-                background-color: #f8f8f8;
-                color: #999;
-                border: 1px solid #e5e5ea;
-            }
-            QLabel { 
-                color: #000; 
-            }
-            QTreeWidget {
-                background-color: #fafafa; 
-                border: 1px solid #e5e5ea;
-                border-radius: 6px; 
-                padding: 5px;
-                color: #000;
-            }
-            QTreeWidget::item { 
-                padding: 6px; 
-                border-radius: 4px;
-            }
-            QTreeWidget::item:hover { 
-                background-color: #f0f0f5; 
-            }
-            QTreeWidget::item:selected { 
-                background-color: #007aff; 
-                color: white; 
-            }
-            QGroupBox {
-                border: 1px solid #e5e5ea;
-                border-radius: 8px;
-                margin-top: 12px;
-                padding-top: 12px;
-                font-weight: 500;
-                color: #000;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px 0 5px;
-                color: #666;
-            }
-            QProgressBar {
-                border: 1px solid #e5e5ea;
-                border-radius: 4px;
-                background-color: #f0f0f5;
-                text-align: center;
-                color: #000;
-            }
-            QProgressBar::chunk {
-                background-color: #007aff;
-                border-radius: 3px;
-            }
-            QScrollBar:vertical {
-                border: none;
-                background: #fafafa;
-                width: 12px;
-                margin: 0px;
-            }
-            QScrollBar::handle:vertical {
-                background: #c7c7cc;
-                border-radius: 6px;
-                min-height: 20px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: #aeaeb2;
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                height: 0px;
-            }
-            QScrollBar:horizontal {
-                border: none;
-                background: #fafafa;
-                height: 12px;
-                margin: 0px;
-            }
-            QScrollBar::handle:horizontal {
-                background: #c7c7cc;
-                border-radius: 6px;
-                min-width: 20px;
-            }
-            QScrollBar::handle:horizontal:hover {
-                background: #aeaeb2;
-            }
-            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
-                width: 0px;
-            }
-        """)
+    def _create_menu(self):
+        """Create menu bar with theme toggle"""
+        menubar = self.menuBar()
+
+        # View menu
+        view_menu = menubar.addMenu("View")
+
+        # Theme toggle action
+        self.theme_action = QAction("🌙 Switch to Dark Mode", self)
+        self.theme_action.triggered.connect(self._toggle_theme)
+        view_menu.addAction(self.theme_action)
+
+    def _toggle_theme(self):
+        """Toggle between Light and Dark mode"""
+        self.dark_mode = not self.dark_mode
+        self._apply_theme()
+
+        # Update menu text
+        if self.dark_mode:
+            self.theme_action.setText("☀️ Switch to Light Mode")
+        else:
+            self.theme_action.setText("🌙 Switch to Dark Mode")
 
     def _create_ui(self):
         """Create main UI with 3-panel layout"""
