@@ -916,7 +916,20 @@ class CC_MainWindow(QMainWindow):
                     mid = result.get('lightness_mid', 33.3)
                     high = result.get('lightness_high', 33.3)
 
-                    logger.info(f"Saving {result['path'].name}: low={low:.1f}, mid={mid:.1f}, high={high:.1f}")
+                    # Get saturation distribution values
+                    sat_vl = result.get('sat_very_low', 0.0)
+                    sat_l = result.get('sat_low', 0.0)
+                    sat_n = result.get('sat_normal', 0.0)
+                    sat_h = result.get('sat_high', 0.0)
+                    sat_vh = result.get('sat_very_high', 0.0)
+
+                    # FORCE DEBUG OUTPUT
+                    print(f">>> DEBUG: {result['path'].name}")
+                    print(f">>>   Saturation from result: vl={sat_vl:.1f}, l={sat_l:.1f}, n={sat_n:.1f}, h={sat_h:.1f}, vh={sat_vh:.1f}")
+
+                    logger.info(f"Saving {result['path'].name}:")
+                    logger.info(f"  Lightness: low={low:.1f}, mid={mid:.1f}, high={high:.1f}")
+                    logger.info(f"  Saturation: vl={sat_vl:.1f}, l={sat_l:.1f}, n={sat_n:.1f}, h={sat_h:.1f}, vh={sat_vh:.1f}")
 
                     analysis_data = {
                         'face_detected': True,
@@ -928,7 +941,18 @@ class CC_MainWindow(QMainWindow):
                         'lightness_mean': result['lightness_mean'],
                         'lightness_low': low,
                         'lightness_mid': mid,
-                        'lightness_high': high
+                        'lightness_high': high,
+                        'hue_very_red': result.get('hue_very_red', 0.0),
+                        'hue_red_orange': result.get('hue_red_orange', 0.0),
+                        'hue_normal': result.get('hue_normal', 0.0),
+                        'hue_yellow': result.get('hue_yellow', 0.0),
+                        'hue_very_yellow': result.get('hue_very_yellow', 0.0),
+                        'hue_abnormal': result.get('hue_abnormal', 0.0),
+                        'sat_very_low': sat_vl,
+                        'sat_low': sat_l,
+                        'sat_normal': sat_n,
+                        'sat_high': sat_h,
+                        'sat_very_high': sat_vh
                     }
                     point_cloud_bytes = pickle.dumps(result['point_cloud'])
                     self.db.save_analysis(photo_id, analysis_data, point_cloud_bytes)

@@ -110,6 +110,12 @@ class CC_Database:
                 lightness_low REAL,
                 lightness_mid REAL,
                 lightness_high REAL,
+                hue_very_red REAL,
+                hue_red_orange REAL,
+                hue_normal REAL,
+                hue_yellow REAL,
+                hue_very_yellow REAL,
+                hue_abnormal REAL,
                 point_cloud_data BLOB,
                 FOREIGN KEY (photo_id) REFERENCES photos(id) ON DELETE CASCADE
             )
@@ -124,6 +130,20 @@ class CC_Database:
             cursor.execute("ALTER TABLE analysis_results ADD COLUMN lightness_high REAL DEFAULT 0.0")
             self.conn.commit()
             logger.info("Added lightness distribution columns to existing database")
+        except sqlite3.OperationalError:
+            # Columns already exist
+            pass
+
+        # Add hue distribution columns (for existing databases)
+        try:
+            cursor.execute("ALTER TABLE analysis_results ADD COLUMN hue_very_red REAL DEFAULT 0.0")
+            cursor.execute("ALTER TABLE analysis_results ADD COLUMN hue_red_orange REAL DEFAULT 0.0")
+            cursor.execute("ALTER TABLE analysis_results ADD COLUMN hue_normal REAL DEFAULT 0.0")
+            cursor.execute("ALTER TABLE analysis_results ADD COLUMN hue_yellow REAL DEFAULT 0.0")
+            cursor.execute("ALTER TABLE analysis_results ADD COLUMN hue_very_yellow REAL DEFAULT 0.0")
+            cursor.execute("ALTER TABLE analysis_results ADD COLUMN hue_abnormal REAL DEFAULT 0.0")
+            self.conn.commit()
+            logger.info("Added hue distribution columns to existing database")
         except sqlite3.OperationalError:
             # Columns already exist
             pass
@@ -286,8 +306,12 @@ class CC_Database:
             INSERT INTO analysis_results (
                 photo_id, face_detected, num_points, mask_coverage,
                 hue_mean, hue_std, saturation_mean, lightness_mean, 
-                lightness_low, lightness_mid, lightness_high, point_cloud_data
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                lightness_low, lightness_mid, lightness_high,
+                hue_very_red, hue_red_orange, hue_normal, 
+                hue_yellow, hue_very_yellow, hue_abnormal,
+                sat_very_low, sat_low, sat_normal, sat_high, sat_very_high,
+                point_cloud_data
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             int(photo_id),
             bool(results.get('face_detected', False)),
@@ -300,6 +324,17 @@ class CC_Database:
             float(results.get('lightness_low', 0.0)),
             float(results.get('lightness_mid', 0.0)),
             float(results.get('lightness_high', 0.0)),
+            float(results.get('hue_very_red', 0.0)),
+            float(results.get('hue_red_orange', 0.0)),
+            float(results.get('hue_normal', 0.0)),
+            float(results.get('hue_yellow', 0.0)),
+            float(results.get('hue_very_yellow', 0.0)),
+            float(results.get('hue_abnormal', 0.0)),
+            float(results.get('sat_very_low', 0.0)),
+            float(results.get('sat_low', 0.0)),
+            float(results.get('sat_normal', 0.0)),
+            float(results.get('sat_high', 0.0)),
+            float(results.get('sat_very_high', 0.0)),
             point_cloud
         ))
         self.conn.commit()
@@ -349,6 +384,17 @@ class CC_Database:
                 ar.lightness_low,
                 ar.lightness_mid,
                 ar.lightness_high,
+                ar.hue_very_red,
+                ar.hue_red_orange,
+                ar.hue_normal,
+                ar.hue_yellow,
+                ar.hue_very_yellow,
+                ar.hue_abnormal,
+                ar.sat_very_low,
+                ar.sat_low,
+                ar.sat_normal,
+                ar.sat_high,
+                ar.sat_very_high,
                 ar.num_points,
                 ar.mask_coverage,
                 ar.analyzed_at

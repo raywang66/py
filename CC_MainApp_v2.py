@@ -96,6 +96,23 @@ class CC_BatchProcessingThread(QThread):
                         mid_light = ((lightness >= 0.33) & (lightness < 0.67)).sum() / len(lightness) * 100
                         high_light = (lightness >= 0.67).sum() / len(lightness) * 100
 
+                        # Calculate hue distribution
+                        hue = point_cloud[:, 0]
+                        hue_very_red = (((hue >= 0) & (hue < 10)) | (hue >= 350)).sum() / len(hue) * 100
+                        hue_red_orange = ((hue >= 10) & (hue < 20)).sum() / len(hue) * 100
+                        hue_normal = ((hue >= 20) & (hue < 30)).sum() / len(hue) * 100
+                        hue_yellow = ((hue >= 30) & (hue < 40)).sum() / len(hue) * 100
+                        hue_very_yellow = ((hue >= 40) & (hue < 60)).sum() / len(hue) * 100
+                        hue_abnormal = ((hue >= 60) & (hue < 350)).sum() / len(hue) * 100
+
+                        # Calculate saturation distribution (convert 0-1 to 0-100)
+                        saturation = point_cloud[:, 1] * 100
+                        sat_very_low = (saturation < 15).sum() / len(saturation) * 100
+                        sat_low = ((saturation >= 15) & (saturation < 30)).sum() / len(saturation) * 100
+                        sat_normal = ((saturation >= 30) & (saturation < 50)).sum() / len(saturation) * 100
+                        sat_high = ((saturation >= 50) & (saturation < 70)).sum() / len(saturation) * 100
+                        sat_very_high = (saturation >= 70).sum() / len(saturation) * 100
+
                         result = {
                             'path': photo_path,
                             'success': True,
@@ -108,6 +125,17 @@ class CC_BatchProcessingThread(QThread):
                             'lightness_low': low_light,
                             'lightness_mid': mid_light,
                             'lightness_high': high_light,
+                            'hue_very_red': hue_very_red,
+                            'hue_red_orange': hue_red_orange,
+                            'hue_normal': hue_normal,
+                            'hue_yellow': hue_yellow,
+                            'hue_very_yellow': hue_very_yellow,
+                            'hue_abnormal': hue_abnormal,
+                            'sat_very_low': sat_very_low,
+                            'sat_low': sat_low,
+                            'sat_normal': sat_normal,
+                            'sat_high': sat_high,
+                            'sat_very_high': sat_very_high,
                             'point_cloud': point_cloud
                         }
                     else:
@@ -713,6 +741,23 @@ class CC_MainWindow(QMainWindow):
         mid_light = ((lightness >= 0.33) & (lightness < 0.67)).sum() / len(lightness) * 100
         high_light = (lightness >= 0.67).sum() / len(lightness) * 100
 
+        # Calculate hue distribution
+        hue = point_cloud[:, 0]
+        hue_very_red = (((hue >= 0) & (hue < 10)) | (hue >= 350)).sum() / len(hue) * 100
+        hue_red_orange = ((hue >= 10) & (hue < 20)).sum() / len(hue) * 100
+        hue_normal = ((hue >= 20) & (hue < 30)).sum() / len(hue) * 100
+        hue_yellow = ((hue >= 30) & (hue < 40)).sum() / len(hue) * 100
+        hue_very_yellow = ((hue >= 40) & (hue < 60)).sum() / len(hue) * 100
+        hue_abnormal = ((hue >= 60) & (hue < 350)).sum() / len(hue) * 100
+
+        # Calculate saturation distribution (convert 0-1 to 0-100)
+        saturation = point_cloud[:, 1] * 100
+        sat_very_low = (saturation < 15).sum() / len(saturation) * 100
+        sat_low = ((saturation >= 15) & (saturation < 30)).sum() / len(saturation) * 100
+        sat_normal = ((saturation >= 30) & (saturation < 50)).sum() / len(saturation) * 100
+        sat_high = ((saturation >= 50) & (saturation < 70)).sum() / len(saturation) * 100
+        sat_very_high = (saturation >= 70).sum() / len(saturation) * 100
+
         self.results_text.setText(
             f"✓ Face detected!\n{len(point_cloud):,} points\nCoverage: {mask.sum() / mask.size * 100:.1f}%"
         )
@@ -724,7 +769,14 @@ class CC_MainWindow(QMainWindow):
             f"📊 Lightness Distribution:\n"
             f"  Low  (<33%): {low_light:.1f}%\n"
             f"  Mid (33-67%): {mid_light:.1f}%\n"
-            f"  High (>67%): {high_light:.1f}%"
+            f"  High (>67%): {high_light:.1f}%\n\n"
+            f"🎨 Hue Distribution:\n"
+            f"  Very Red (0-10°, 350-360°): {hue_very_red:.1f}%\n"
+            f"  Red-Orange (10-20°): {hue_red_orange:.1f}%\n"
+            f"  Normal (20-30°): {hue_normal:.1f}%\n"
+            f"  Yellow (30-40°): {hue_yellow:.1f}%\n"
+            f"  Very Yellow (40-60°): {hue_very_yellow:.1f}%\n"
+            f"  Abnormal (60-350°): {hue_abnormal:.1f}%"
         )
 
         # Save to database
@@ -740,7 +792,13 @@ class CC_MainWindow(QMainWindow):
                 'lightness_mean': l_mean,
                 'lightness_low': low_light,
                 'lightness_mid': mid_light,
-                'lightness_high': high_light
+                'lightness_high': high_light,
+                'hue_very_red': hue_very_red,
+                'hue_red_orange': hue_red_orange,
+                'hue_normal': hue_normal,
+                'hue_yellow': hue_yellow,
+                'hue_very_yellow': hue_very_yellow,
+                'hue_abnormal': hue_abnormal
             }
             point_cloud_bytes = pickle.dumps(point_cloud)
             self.db.save_analysis(photo_id, results, point_cloud_bytes)
@@ -800,7 +858,21 @@ class CC_MainWindow(QMainWindow):
                         'hue_mean': result['hue_mean'],
                         'hue_std': result['hue_std'],
                         'saturation_mean': result['saturation_mean'],
-                        'lightness_mean': result['lightness_mean']
+                        'lightness_mean': result['lightness_mean'],
+                        'lightness_low': result['lightness_low'],
+                        'lightness_mid': result['lightness_mid'],
+                        'lightness_high': result['lightness_high'],
+                        'hue_very_red': result['hue_very_red'],
+                        'hue_red_orange': result['hue_red_orange'],
+                        'hue_normal': result['hue_normal'],
+                        'hue_yellow': result['hue_yellow'],
+                        'hue_very_yellow': result['hue_very_yellow'],
+                        'hue_abnormal': result['hue_abnormal'],
+                        'sat_very_low': result['sat_very_low'],
+                        'sat_low': result['sat_low'],
+                        'sat_normal': result['sat_normal'],
+                        'sat_high': result['sat_high'],
+                        'sat_very_high': result['sat_very_high']
                     }
                     point_cloud_bytes = pickle.dumps(result['point_cloud'])
                     self.db.save_analysis(photo_id, analysis_data, point_cloud_bytes)
@@ -811,29 +883,35 @@ class CC_MainWindow(QMainWindow):
             f"Analyzed {len(results)} photos\nSuccess: {success_count}\nFailed: {len(results) - success_count}")
 
     def _show_statistics(self, data):
-        """Show statistics for album/project"""
+        """Show advanced statistics for album/project"""
+        # Get detailed statistics data
         if data['type'] == 'album':
-            stats = self.db.get_album_statistics(data['id'])
-            title = f"Album: {data['name']}"
+            detailed_stats = self.db.get_album_detailed_statistics(data['id'])
+            title = data['name']
         else:
-            stats = self.db.get_project_statistics(data['id'])
-            title = f"Project: {data['name']}"
-
-        if not stats or stats.get('analyzed_count', 0) == 0:
-            QMessageBox.information(self, title, "No analysis data available")
+            # TODO: Add get_project_detailed_statistics
+            QMessageBox.information(self, f"Project: {data['name']}",
+                                   "Project statistics not yet implemented.\n\nPlease use albums for now.")
             return
 
-        msg = f"""
-Analyzed Photos: {stats['analyzed_count']}
+        if not detailed_stats or len(detailed_stats) == 0:
+            QMessageBox.information(self, f"Album: {title}",
+                                   "No analysis data available.\n\nPlease analyze some photos first.")
+            return
 
-Average Hue: {stats['avg_hue']:.1f}°
-Hue Range: {stats['min_hue']:.1f}° - {stats['max_hue']:.1f}°
+        # Debug: Log first few records to see what data we have
+        logger.info(f"Retrieved {len(detailed_stats)} records from database")
+        if len(detailed_stats) > 0:
+            first = detailed_stats[0]
+            logger.info(f"First record keys: {first.keys()}")
+            logger.info(f"First record lightness: low={first.get('lightness_low')}, mid={first.get('lightness_mid')}, high={first.get('lightness_high')}")
+            logger.info(f"First record hue dist: very_red={first.get('hue_very_red')}, normal={first.get('hue_normal')}")
 
-Average Saturation: {stats['avg_saturation'] * 100:.1f}%
-Average Lightness: {stats['avg_lightness'] * 100:.1f}%
-        """.strip()
-
-        QMessageBox.information(self, title, msg)
+        # Open advanced statistics window
+        from CC_StatisticsWindow import CC_StatisticsWindow
+        stats_window = CC_StatisticsWindow(title, detailed_stats)
+        stats_window.show()
+        self.stats_window = stats_window  # Keep reference to prevent garbage collection
 
     def _show_visualization(self):
         """Show 3D visualization"""

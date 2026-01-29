@@ -158,11 +158,19 @@ class CC_StatisticsWindow(QWidget):
         self.hue_tab = self._create_chart_tab()
         self.tabs.addTab(self.hue_tab, "🎨 Hue Distribution")
 
-        # Tab 3: 3D Scatter
+        # Tab 3: Hue Distribution Comparison (NEW)
+        self.hue_comparison_tab = self._create_chart_tab()
+        self.tabs.addTab(self.hue_comparison_tab, "🌈 Hue Comparison")
+
+        # Tab 4: Saturation Distribution Comparison (NEW)
+        self.saturation_comparison_tab = self._create_chart_tab()
+        self.tabs.addTab(self.saturation_comparison_tab, "💧 Saturation Comparison")
+
+        # Tab 5: 3D Scatter
         self.scatter_tab = self._create_chart_tab()
         self.tabs.addTab(self.scatter_tab, "📊 HSL Scatter")
 
-        # Tab 4: Lightness Distribution
+        # Tab 6: Lightness Distribution
         self.lightness_tab = self._create_chart_tab()
         self.tabs.addTab(self.lightness_tab, "💡 Lightness Analysis")
 
@@ -258,10 +266,16 @@ class CC_StatisticsWindow(QWidget):
         # Plot 1: Hue Distribution Histogram
         self._plot_hue_distribution(self.hue_tab, hues)
 
-        # Plot 2: 3D HSL Scatter
+        # Plot 2: Hue Distribution Comparison (NEW)
+        self._plot_hue_comparison(self.hue_comparison_tab)
+
+        # Plot 3: Saturation Distribution Comparison (NEW)
+        self._plot_saturation_comparison(self.saturation_comparison_tab)
+
+        # Plot 4: 3D HSL Scatter
         self._plot_3d_scatter(self.scatter_tab, hues, sats, lights, photo_names)
 
-        # Plot 3: Lightness Distribution
+        # Plot 4: Lightness Distribution
         self._plot_lightness_distribution(self.lightness_tab)
 
     def _plot_hue_distribution(self, parent_tab: QWidget, hues: List[float]):
@@ -443,7 +457,7 @@ class CC_StatisticsWindow(QWidget):
         layout.addWidget(toolbar)
         layout.addWidget(canvas)
 
-    def _add_hover_tooltip(self, canvas, ax, x_positions, photo_names, photo_paths, bars_low, bars_mid, bars_high):
+    def _add_hover_tooltip(self, canvas, ax, x_positions, photo_names, photo_paths, *bars):
         """Add interactive hover tooltip with photo preview using Qt tooltip"""
         from PIL import Image
 
@@ -545,6 +559,277 @@ class CC_StatisticsWindow(QWidget):
         # Connect the hover event
         canvas.mpl_connect('motion_notify_event', on_hover)
         logger.info("Added hover tooltip functionality")
+
+    def _plot_hue_comparison(self, parent_tab: QWidget):
+        """Plot hue distribution comparison (similar to lightness distribution)"""
+        layout = parent_tab.layout()
+
+        # Extract hue distribution data
+        photo_names = []
+        photo_paths = []
+        very_red_values = []
+        red_orange_values = []
+        normal_values = []
+        yellow_values = []
+        very_yellow_values = []
+        abnormal_values = []
+
+        logger.info(f"Plotting hue distribution comparison for {len(self.stats_data)} photos")
+
+        for i, data in enumerate(self.stats_data):
+            # Get hue distribution values
+            very_red = data.get('hue_very_red')
+            red_orange = data.get('hue_red_orange')
+            normal = data.get('hue_normal')
+            yellow = data.get('hue_yellow')
+            very_yellow = data.get('hue_very_yellow')
+            abnormal = data.get('hue_abnormal')
+
+            # Skip photos without valid data
+            if any(v is None for v in [very_red, red_orange, normal, yellow, very_yellow, abnormal]):
+                logger.warning(f"Photo {i}: Missing hue distribution data (None)")
+                continue
+
+            # Skip if all are 0.0 (old analysis without distribution data)
+            if all(v == 0.0 for v in [very_red, red_orange, normal, yellow, very_yellow, abnormal]):
+                logger.warning(f"Photo {i}: Missing hue distribution data (all zeros)")
+                continue
+
+            # Try to convert to float
+            try:
+                very_red_val = float(very_red)
+                red_orange_val = float(red_orange)
+                normal_val = float(normal)
+                yellow_val = float(yellow)
+                very_yellow_val = float(very_yellow)
+                abnormal_val = float(abnormal)
+            except (TypeError, ValueError) as e:
+                logger.error(f"Photo {i}: Cannot convert hue distribution data: {e}")
+                continue
+
+            # Add to arrays
+            full_name = data.get('photo_name', f"Photo {i+1}")
+            file_path = data.get('file_path', '')
+            short_name = Path(full_name).stem[:15]  # First 15 chars, no extension
+            photo_names.append(short_name)
+            photo_paths.append(file_path)
+            very_red_values.append(very_red_val)
+            red_orange_values.append(red_orange_val)
+            normal_values.append(normal_val)
+            yellow_values.append(yellow_val)
+            very_yellow_values.append(very_yellow_val)
+            abnormal_values.append(abnormal_val)
+
+        logger.info(f"Successfully extracted hue data for {len(photo_names)} photos")
+
+        if not photo_names:
+            # No valid data
+            error_label = QLabel("❌ No hue distribution data available.\n\n"
+                                "Please re-analyze photos to generate this data.")
+            error_label.setStyleSheet("color: #666; font-size: 14px; padding: 40px;")
+            error_label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(error_label)
+            return
+
+        # If we have too many photos, show only a sample
+        max_photos_display = 50
+        if len(photo_names) > max_photos_display:
+            logger.info(f"Too many photos ({len(photo_names)}), sampling {max_photos_display}")
+            indices = np.linspace(0, len(photo_names) - 1, max_photos_display, dtype=int)
+            photo_names = [photo_names[i] for i in indices]
+            photo_paths = [photo_paths[i] for i in indices]
+            very_red_values = [very_red_values[i] for i in indices]
+            red_orange_values = [red_orange_values[i] for i in indices]
+            normal_values = [normal_values[i] for i in indices]
+            yellow_values = [yellow_values[i] for i in indices]
+            very_yellow_values = [very_yellow_values[i] for i in indices]
+            abnormal_values = [abnormal_values[i] for i in indices]
+
+        # Adjust canvas size based on number of photos
+        width = max(12, len(photo_names) * 0.3)
+        canvas = MplCanvas(parent_tab, width=width, height=6)
+        toolbar = NavigationToolbar2QT(canvas, parent_tab)
+
+        ax = canvas.axes
+
+        # Create stacked bar chart with professional skin tone colors
+        x = np.arange(len(photo_names))
+        width_bar = 0.8
+
+        # Define colors for each hue range (using appropriate colors)
+        bars_very_red = ax.bar(x, very_red_values, width_bar, label='Very Red (0-10°, 350-360°)',
+                               color='#8B0000', alpha=0.8)
+
+        bars_red_orange = ax.bar(x, red_orange_values, width_bar, bottom=very_red_values,
+                                  label='Red-Orange (10-20°)', color='#CD5C5C', alpha=0.8)
+
+        bottom_normal = [vr + ro for vr, ro in zip(very_red_values, red_orange_values)]
+        bars_normal = ax.bar(x, normal_values, width_bar, bottom=bottom_normal,
+                             label='Normal (20-30°)', color='#D2B48C', alpha=0.8)
+
+        bottom_yellow = [b + n for b, n in zip(bottom_normal, normal_values)]
+        bars_yellow = ax.bar(x, yellow_values, width_bar, bottom=bottom_yellow,
+                             label='Yellow (30-40°)', color='#DAA520', alpha=0.8)
+
+        bottom_very_yellow = [b + y for b, y in zip(bottom_yellow, yellow_values)]
+        bars_very_yellow = ax.bar(x, very_yellow_values, width_bar, bottom=bottom_very_yellow,
+                                   label='Very Yellow (40-60°)', color='#FFD700', alpha=0.8)
+
+        bottom_abnormal = [b + vy for b, vy in zip(bottom_very_yellow, very_yellow_values)]
+        bars_abnormal = ax.bar(x, abnormal_values, width_bar, bottom=bottom_abnormal,
+                               label='Abnormal (60-350°)', color='#696969', alpha=0.8)
+
+        ax.set_xlabel('Photos', fontsize=12, weight='bold')
+        ax.set_ylabel('Percentage (%)', fontsize=12, weight='bold')
+        ax.set_title(f'Hue Distribution Comparison ({len(photo_names)} photos)',
+                     fontsize=14, weight='bold', pad=20)
+        ax.set_xticks(x)
+        ax.set_xticklabels(photo_names, rotation=60, ha='right', fontsize=8)
+        ax.legend(loc='upper right', fontsize=9, ncol=2)
+        ax.grid(True, alpha=0.3, linestyle='--', axis='y')
+        ax.set_facecolor('#FAFAFA')
+        ax.set_ylim(0, 105)  # Slightly more than 100 for visibility
+
+        # Add interactive hover tooltip with photo preview
+        self._add_hover_tooltip(canvas, ax, x, photo_names, photo_paths,
+                                bars_very_red, bars_red_orange, bars_normal,
+                                bars_yellow, bars_very_yellow, bars_abnormal)
+
+        canvas.figure.tight_layout()
+
+        layout.addWidget(toolbar)
+        layout.addWidget(canvas)
+
+    def _plot_saturation_comparison(self, parent_tab: QWidget):
+        """Plot saturation distribution comparison"""
+        layout = parent_tab.layout()
+
+        # Extract saturation distribution data
+        photo_names = []
+        photo_paths = []
+        very_low_values = []
+        low_values = []
+        normal_values = []
+        high_values = []
+        very_high_values = []
+
+        logger.info(f"Plotting saturation distribution comparison for {len(self.stats_data)} photos")
+
+        for i, data in enumerate(self.stats_data):
+            # Get saturation distribution values
+            very_low = data.get('sat_very_low')
+            low = data.get('sat_low')
+            normal = data.get('sat_normal')
+            high = data.get('sat_high')
+            very_high = data.get('sat_very_high')
+
+            # Skip photos without valid data
+            if any(v is None for v in [very_low, low, normal, high, very_high]):
+                logger.warning(f"Photo {i}: Missing saturation distribution data (None)")
+                continue
+
+            # Skip if all are 0.0 (old analysis without distribution data)
+            if all(v == 0.0 for v in [very_low, low, normal, high, very_high]):
+                logger.warning(f"Photo {i}: Missing saturation distribution data (all zeros)")
+                continue
+
+            # Try to convert to float
+            try:
+                very_low_val = float(very_low)
+                low_val = float(low)
+                normal_val = float(normal)
+                high_val = float(high)
+                very_high_val = float(very_high)
+            except (TypeError, ValueError) as e:
+                logger.error(f"Photo {i}: Cannot convert saturation distribution data: {e}")
+                continue
+
+            # Add to arrays
+            full_name = data.get('photo_name', f"Photo {i+1}")
+            file_path = data.get('file_path', '')
+            short_name = Path(full_name).stem[:15]
+            photo_names.append(short_name)
+            photo_paths.append(file_path)
+            very_low_values.append(very_low_val)
+            low_values.append(low_val)
+            normal_values.append(normal_val)
+            high_values.append(high_val)
+            very_high_values.append(very_high_val)
+
+        logger.info(f"Successfully extracted saturation data for {len(photo_names)} photos")
+
+        if not photo_names:
+            # No valid data
+            error_label = QLabel("❌ No saturation distribution data available.\n\n"
+                                "Please re-analyze photos to generate this data.")
+            error_label.setStyleSheet("color: #666; font-size: 14px; padding: 40px;")
+            error_label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(error_label)
+            return
+
+        # If we have too many photos, show only a sample
+        max_photos_display = 50
+        if len(photo_names) > max_photos_display:
+            logger.info(f"Too many photos ({len(photo_names)}), sampling {max_photos_display}")
+            indices = np.linspace(0, len(photo_names) - 1, max_photos_display, dtype=int)
+            photo_names = [photo_names[i] for i in indices]
+            photo_paths = [photo_paths[i] for i in indices]
+            very_low_values = [very_low_values[i] for i in indices]
+            low_values = [low_values[i] for i in indices]
+            normal_values = [normal_values[i] for i in indices]
+            high_values = [high_values[i] for i in indices]
+            very_high_values = [very_high_values[i] for i in indices]
+
+        # Adjust canvas size based on number of photos
+        width = max(12, len(photo_names) * 0.3)
+        canvas = MplCanvas(parent_tab, width=width, height=6)
+        toolbar = NavigationToolbar2QT(canvas, parent_tab)
+
+        ax = canvas.axes
+
+        # Create stacked bar chart with saturation-appropriate colors
+        x = np.arange(len(photo_names))
+        width_bar = 0.8
+
+        # Define colors for each saturation range (grayscale to vibrant)
+        bars_very_low = ax.bar(x, very_low_values, width_bar, label='Very Low (<15%)',
+                               color='#D3D3D3', alpha=0.8)
+
+        bars_low = ax.bar(x, low_values, width_bar, bottom=very_low_values,
+                          label='Low (15-30%)', color='#B0C4DE', alpha=0.8)
+
+        bottom_normal = [vl + l for vl, l in zip(very_low_values, low_values)]
+        bars_normal = ax.bar(x, normal_values, width_bar, bottom=bottom_normal,
+                             label='Normal (30-50%)', color='#87CEEB', alpha=0.8)
+
+        bottom_high = [b + n for b, n in zip(bottom_normal, normal_values)]
+        bars_high = ax.bar(x, high_values, width_bar, bottom=bottom_high,
+                           label='High (50-70%)', color='#4682B4', alpha=0.8)
+
+        bottom_very_high = [b + h for b, h in zip(bottom_high, high_values)]
+        bars_very_high = ax.bar(x, very_high_values, width_bar, bottom=bottom_very_high,
+                                label='Very High (>70%)', color='#191970', alpha=0.8)
+
+        ax.set_xlabel('Photos', fontsize=12, weight='bold')
+        ax.set_ylabel('Percentage (%)', fontsize=12, weight='bold')
+        ax.set_title(f'Saturation Distribution Comparison ({len(photo_names)} photos)',
+                     fontsize=14, weight='bold', pad=20)
+        ax.set_xticks(x)
+        ax.set_xticklabels(photo_names, rotation=60, ha='right', fontsize=8)
+        ax.legend(loc='upper right', fontsize=10)
+        ax.grid(True, alpha=0.3, linestyle='--', axis='y')
+        ax.set_facecolor('#FAFAFA')
+        ax.set_ylim(0, 105)
+
+        # Add interactive hover tooltip with photo preview
+        self._add_hover_tooltip(canvas, ax, x, photo_names, photo_paths,
+                                bars_very_low, bars_low, bars_normal,
+                                bars_high, bars_very_high)
+
+        canvas.figure.tight_layout()
+
+        layout.addWidget(toolbar)
+        layout.addWidget(canvas)
 
     def _export_report(self):
         """Export statistics report"""
