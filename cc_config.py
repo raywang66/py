@@ -70,8 +70,11 @@ class CC_HSLConfig:
     """Configuration for HSL 3D visualization"""
 
     # Hue range for skin tones (in degrees)
-    hue_min: float = 15.0
-    hue_max: float = 25.0
+    # Note: These are REFERENCE values for the 3D wedge visualization
+    # Actual pixel data is NOT filtered by these values
+    # Users need to see ALL pixels to analyze skin tone issues
+    hue_min: float = 15.0  # Reference: typical skin tone lower bound
+    hue_max: float = 25.0  # Reference: typical skin tone upper bound
 
     # Saturation filter (optional, 0-100%)
     saturation_min: float = 10.0

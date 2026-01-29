@@ -226,8 +226,9 @@ class CC_SkinProcessor:
         # Convert RGB to HSL for masked pixels
         point_cloud = self._extract_hsl_points(image_rgb, skin_mask)
 
-        # Filter by hue range
-        point_cloud = self._filter_by_hue(point_cloud)
+        # Note: We do NOT filter by hue range here!
+        # We keep ALL pixels to preserve true skin color information
+        # Users need to see if there are pixels <15° (too red) or >25° (too yellow)
 
         # Downsample if needed
         point_cloud = self._downsample_points(point_cloud)
