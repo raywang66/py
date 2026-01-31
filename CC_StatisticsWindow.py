@@ -172,7 +172,7 @@ class CC_StatisticsWindow(QWidget):
 
         # Tab 6: Lightness Distribution
         self.lightness_tab = self._create_chart_tab()
-        self.tabs.addTab(self.lightness_tab, "💡 Lightness Analysis")
+        self.tabs.addTab(self.lightness_tab, "💡 Lightness Comparison")
 
         layout.addWidget(self.tabs)
 
@@ -458,21 +458,31 @@ class CC_StatisticsWindow(QWidget):
         layout.addWidget(canvas)
 
     def _add_hover_tooltip(self, canvas, ax, x_positions, photo_names, photo_paths, *bars):
-        """Add interactive hover tooltip with photo preview using Qt tooltip"""
+        """Add interactive hover tooltip with multi-dimensional comparison charts"""
         from PIL import Image
+        from io import BytesIO
 
-        # Create a tooltip label (initially hidden)
-        tooltip_label = QLabel(canvas)
-        tooltip_label.setWindowFlags(Qt.ToolTip)
-        tooltip_label.setStyleSheet("""
-            QLabel {
+        # Create a tooltip widget (initially hidden)
+        tooltip_widget = QWidget(canvas)
+        tooltip_widget.setWindowFlags(Qt.ToolTip)
+        tooltip_widget.setStyleSheet("""
+            QWidget {
                 background-color: white;
-                border: 2px solid #007AFF;
-                border-radius: 8px;
-                padding: 5px;
+                border: 1px solid #CCCCCC;
+                border-radius: 4px;
             }
         """)
-        tooltip_label.hide()
+        tooltip_layout = QVBoxLayout(tooltip_widget)
+        tooltip_layout.setContentsMargins(8, 8, 8, 8)
+        tooltip_layout.setSpacing(5)
+
+        # Create labels for content
+        photo_label = QLabel()
+        chart_label = QLabel()
+
+        tooltip_layout.addWidget(photo_label)
+        tooltip_layout.addWidget(chart_label)
+        tooltip_widget.hide()
 
         # Store current bar index
         self.current_bar_index = None
@@ -481,7 +491,7 @@ class CC_StatisticsWindow(QWidget):
             """Handle mouse hover event"""
             if event.inaxes != ax:
                 # Mouse is outside the axes, hide tooltip
-                tooltip_label.hide()
+                tooltip_widget.hide()
                 self.current_bar_index = None
                 return
 
@@ -498,67 +508,206 @@ class CC_StatisticsWindow(QWidget):
                 path = photo_paths[hovered_bar]
                 name = photo_names[hovered_bar]
 
-                # Try to load and display thumbnail
                 try:
+                    # Get the full photo name (find matching photo in stats_data)
+                    full_photo_name = None
+                    photo_data = None
+                    for data in self.stats_data:
+                        data_short_name = Path(data.get('photo_name', '')).stem[:15]
+                        if data_short_name == name:
+                            full_photo_name = data.get('photo_name', name)
+                            photo_data = data
+                            break
+
+                    if not photo_data:
+                        tooltip_widget.hide()
+                        return
+
+                    # Load and display thumbnail (larger size for better face visibility)
                     if path and Path(path).exists():
-                        # Load image
                         img = Image.open(path)
-
-                        # Resize to thumbnail (300px for better face visibility)
-                        img.thumbnail((300, 300), Image.Resampling.LANCZOS)
-
-                        # Convert to RGB if needed
+                        img.thumbnail((250, 250), Image.Resampling.LANCZOS)
                         if img.mode != 'RGB':
                             img = img.convert('RGB')
 
-                        # Convert PIL Image to QPixmap
-                        from io import BytesIO
                         buffer = BytesIO()
                         img.save(buffer, format='PNG')
                         buffer.seek(0)
 
                         pixmap = QPixmap()
                         pixmap.loadFromData(buffer.read())
-
-                        # Set pixmap to label
-                        tooltip_label.setPixmap(pixmap)
-
-                        # Position tooltip near the cursor but visible
-                        # Get cursor position in screen coordinates
-                        cursor_pos = canvas.mapToGlobal(canvas.mapFromParent(canvas.pos()))
-
-                        # Position to the right and slightly down from cursor
-                        tooltip_x = cursor_pos.x() + 20
-                        tooltip_y = cursor_pos.y() + 20
-
-                        # Make sure tooltip stays on screen
-                        screen_geometry = QApplication.primaryScreen().geometry()
-
-                        # Adjust if tooltip would go off screen
-                        if tooltip_x + pixmap.width() > screen_geometry.width():
-                            tooltip_x = cursor_pos.x() - pixmap.width() - 20
-                        if tooltip_y + pixmap.height() > screen_geometry.height():
-                            tooltip_y = screen_geometry.height() - pixmap.height() - 20
-
-                        tooltip_label.move(tooltip_x, tooltip_y)
-                        tooltip_label.show()
-                        tooltip_label.raise_()
-
-                        logger.debug(f"Showing thumbnail for: {name}")
+                        photo_label.setPixmap(pixmap)
                     else:
-                        logger.warning(f"Photo not found: {path}")
-                        tooltip_label.hide()
+                        photo_label.setText(f"📷 {full_photo_name}")
+
+                    # Generate mini comparison charts (the other two dimensions)
+                    chart_pixmap = self._generate_multi_dim_chart(photo_data, ax)
+                    chart_label.setPixmap(chart_pixmap)
+
+                    # Adjust widget size
+                    tooltip_widget.adjustSize()
+
+                    # Position tooltip near the cursor
+                    cursor_pos = canvas.mapToGlobal(canvas.mapFromParent(canvas.pos()))
+                    tooltip_x = cursor_pos.x() + 20
+                    tooltip_y = cursor_pos.y() + 20
+
+                    # Make sure tooltip stays on screen
+                    screen_geometry = QApplication.primaryScreen().geometry()
+                    if tooltip_x + tooltip_widget.width() > screen_geometry.width():
+                        tooltip_x = cursor_pos.x() - tooltip_widget.width() - 20
+                    if tooltip_y + tooltip_widget.height() > screen_geometry.height():
+                        tooltip_y = screen_geometry.height() - tooltip_widget.height() - 20
+
+                    tooltip_widget.move(tooltip_x, tooltip_y)
+                    tooltip_widget.show()
+                    tooltip_widget.raise_()
+
+                    logger.debug(f"Showing multi-dimensional tooltip for: {name}")
                 except Exception as e:
-                    logger.error(f"Error loading thumbnail: {e}")
-                    tooltip_label.hide()
+                    logger.error(f"Error creating tooltip: {e}")
+                    tooltip_widget.hide()
             elif hovered_bar is None:
-                # Mouse is not over any bar
-                tooltip_label.hide()
+                tooltip_widget.hide()
                 self.current_bar_index = None
 
         # Connect the hover event
         canvas.mpl_connect('motion_notify_event', on_hover)
-        logger.info("Added hover tooltip functionality")
+        logger.info("Added multi-dimensional hover tooltip functionality")
+
+    def _generate_multi_dim_chart(self, photo_data: Dict, current_ax) -> QPixmap:
+        """Generate mini comparison charts for the other two dimensions"""
+        from io import BytesIO
+
+        # Determine which chart we're currently viewing
+        current_title = current_ax.get_title().lower()
+
+        # Create a compact figure with 2 mini bar charts (vertical, same width as main chart bars)
+        fig = Figure(figsize=(1.5, 2.5), dpi=100, facecolor='white')
+
+        if 'hue' in current_title:
+            # Currently viewing Hue, show Saturation and Lightness
+            ax1 = fig.add_subplot(1, 2, 1)
+            ax2 = fig.add_subplot(1, 2, 2)
+            self._plot_mini_saturation(ax1, photo_data)
+            self._plot_mini_lightness(ax2, photo_data)
+        elif 'saturation' in current_title:
+            # Currently viewing Saturation, show Hue and Lightness
+            ax1 = fig.add_subplot(1, 2, 1)
+            ax2 = fig.add_subplot(1, 2, 2)
+            self._plot_mini_hue(ax1, photo_data)
+            self._plot_mini_lightness(ax2, photo_data)
+        elif 'lightness' in current_title:
+            # Currently viewing Lightness, show Hue and Saturation
+            ax1 = fig.add_subplot(1, 2, 1)
+            ax2 = fig.add_subplot(1, 2, 2)
+            self._plot_mini_hue(ax1, photo_data)
+            self._plot_mini_saturation(ax2, photo_data)
+        else:
+            # Default: show all three
+            ax1 = fig.add_subplot(1, 3, 1)
+            ax2 = fig.add_subplot(1, 3, 2)
+            ax3 = fig.add_subplot(1, 3, 3)
+            self._plot_mini_hue(ax1, photo_data)
+            self._plot_mini_saturation(ax2, photo_data)
+            self._plot_mini_lightness(ax3, photo_data)
+
+        fig.tight_layout(pad=0.3)
+
+        # Convert figure to QPixmap
+        buffer = BytesIO()
+        fig.savefig(buffer, format='png', dpi=100, bbox_inches='tight')
+        buffer.seek(0)
+
+        pixmap = QPixmap()
+        pixmap.loadFromData(buffer.read())
+
+        plt.close(fig)
+
+        return pixmap
+
+    def _plot_mini_hue(self, ax, photo_data: Dict):
+        """Plot mini hue distribution chart - vertical stacked bar (no legend)"""
+        values = [
+            photo_data.get('hue_very_red', 0),
+            photo_data.get('hue_red_orange', 0),
+            photo_data.get('hue_normal', 0),
+            photo_data.get('hue_yellow', 0),
+            photo_data.get('hue_very_yellow', 0),
+            photo_data.get('hue_abnormal', 0)
+        ]
+        colors = ['#8B0000', '#CD5C5C', '#D2B48C', '#DAA520', '#FFD700', '#696969']
+
+        # Create vertical stacked bar
+        x = [0]
+        bottom = 0
+        for val, color in zip(values, colors):
+            ax.bar(x, val, bottom=bottom, color=color, width=0.6, edgecolor='white', linewidth=0.5)
+            bottom += val
+
+        ax.set_ylim(0, 100)
+        ax.set_xlim(-0.5, 0.5)
+        ax.set_xlabel('Hue', fontsize=7, weight='bold')
+        ax.set_yticks([])
+        ax.set_xticks([])
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['bottom'].set_visible(False)
+        ax.spines['left'].set_visible(False)
+
+    def _plot_mini_saturation(self, ax, photo_data: Dict):
+        """Plot mini saturation distribution chart - vertical stacked bar (no legend)"""
+        values = [
+            photo_data.get('sat_very_low', 0),
+            photo_data.get('sat_low', 0),
+            photo_data.get('sat_normal', 0),
+            photo_data.get('sat_high', 0),
+            photo_data.get('sat_very_high', 0)
+        ]
+        colors = ['#D3D3D3', '#B0C4DE', '#87CEEB', '#4682B4', '#191970']
+
+        # Create vertical stacked bar
+        x = [0]
+        bottom = 0
+        for val, color in zip(values, colors):
+            ax.bar(x, val, bottom=bottom, color=color, width=0.6, edgecolor='white', linewidth=0.5)
+            bottom += val
+
+        ax.set_ylim(0, 100)
+        ax.set_xlim(-0.5, 0.5)
+        ax.set_xlabel('Sat', fontsize=7, weight='bold')
+        ax.set_yticks([])
+        ax.set_xticks([])
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['bottom'].set_visible(False)
+        ax.spines['left'].set_visible(False)
+
+    def _plot_mini_lightness(self, ax, photo_data: Dict):
+        """Plot mini lightness distribution chart - vertical stacked bar (no legend)"""
+        values = [
+            photo_data.get('lightness_low', 0),
+            photo_data.get('lightness_mid', 0),
+            photo_data.get('lightness_high', 0)
+        ]
+        colors = ['#8B4513', '#CD853F', '#F4A460']
+
+        # Create vertical stacked bar
+        x = [0]
+        bottom = 0
+        for val, color in zip(values, colors):
+            ax.bar(x, val, bottom=bottom, color=color, width=0.6, edgecolor='white', linewidth=0.5)
+            bottom += val
+
+        ax.set_ylim(0, 100)
+        ax.set_xlim(-0.5, 0.5)
+        ax.set_xlabel('Light', fontsize=7, weight='bold')
+        ax.set_yticks([])
+        ax.set_xticks([])
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['bottom'].set_visible(False)
+        ax.spines['left'].set_visible(False)
 
     def _plot_hue_comparison(self, parent_tab: QWidget):
         """Plot hue distribution comparison (similar to lightness distribution)"""
