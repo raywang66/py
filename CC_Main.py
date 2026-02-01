@@ -268,6 +268,18 @@ class CC_MainWindow(QMainWindow):
         self.current_mask: Optional[np.ndarray] = None
         self.dark_mode: bool = False  # Light mode by default
 
+        # Folder monitoring and auto-analysis
+        self.folder_watchers = {}  # album_id -> CC_FolderWatcher
+        from CC_AutoAnalyzer import CC_AutoAnalyzer
+        # Pass database path instead of database object (for thread safety)
+        self.auto_analyzer = CC_AutoAnalyzer(self.processor, self.db.db_path)
+        self.auto_analyzer.analysis_complete.connect(self._on_auto_analysis_complete)
+        self.auto_analyzer.analysis_failed.connect(self._on_auto_analysis_failed)
+        self.auto_analyzer.queue_progress.connect(self._update_analysis_progress)
+        self.auto_analyzer.status_update.connect(self._update_status)
+        self.auto_analyzer.start()
+        logger.info("Auto-analyzer started")
+
         # 3D Renderer
         self.renderer_3d = None
         try:
@@ -286,6 +298,9 @@ class CC_MainWindow(QMainWindow):
         self._create_menu()
         self._create_ui()
         self._load_navigator()
+
+        # Restore folder monitoring for existing folder albums
+        self._restore_folder_monitoring()
 
         logger.info("ChromaCloud GUI initialized")
 
@@ -431,6 +446,23 @@ class CC_MainWindow(QMainWindow):
     def _create_menu(self):
         """Create menu bar"""
         menubar = self.menuBar()
+
+        # File menu
+        file_menu = menubar.addMenu("File")
+
+        add_folder_album_action = QAction("📁 Add Folder Album...", self)
+        add_folder_album_action.setShortcut("Ctrl+Shift+O")
+        add_folder_album_action.triggered.connect(self._add_folder_album)
+        file_menu.addAction(add_folder_album_action)
+
+        file_menu.addSeparator()
+
+        exit_action = QAction("Exit", self)
+        exit_action.setShortcut("Ctrl+Q")
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
+
+        # View menu
         view_menu = menubar.addMenu("View")
 
         self.theme_action = QAction("🌙 Dark Mode", self)
@@ -595,18 +627,164 @@ class CC_MainWindow(QMainWindow):
         return panel
 
     def _load_navigator(self):
-        """Load albums"""
+        """Load albums and folders in separate sections"""
         self.nav_tree.clear()
 
-        # All Photos
+        # All Photos (root level)
         all_photos = QTreeWidgetItem(self.nav_tree, ["📷 All Photos"])
         all_photos.setData(0, Qt.UserRole, {'type': 'all_photos'})
 
-        # Albums
+        # Folders Section (collapsible)
+        folders_root = QTreeWidgetItem(self.nav_tree, ["📂 Folders"])
+        folders_root.setData(0, Qt.UserRole, {'type': 'section', 'section_name': 'folders'})
+        folders_root.setExpanded(True)  # 默认展开
+
+        # Albums Section (collapsible)
+        albums_root = QTreeWidgetItem(self.nav_tree, ["📁 Albums"])
+        albums_root.setData(0, Qt.UserRole, {'type': 'section', 'section_name': 'albums'})
+        albums_root.setExpanded(True)  # 默认展开
+
+        # Load all albums from database
         albums = self.db.get_all_albums()
+
+        folder_count = 0
+        album_count = 0
+
         for album in albums:
-            item = QTreeWidgetItem(self.nav_tree, [f"📁 {album['name']} ({album['photo_count']})"])
-            item.setData(0, Qt.UserRole, {'type': 'album', 'id': album['id'], 'name': album['name']})
+            is_folder_album = album.get('folder_path') and album.get('auto_scan')
+
+            if is_folder_album:
+                # Add to Folders section with directory tree structure
+                folder_path = Path(album.get('folder_path', ''))
+
+                # 使用实时扫描的照片数量，确保与子目录数量一致
+                actual_photo_count = self._count_photos_in_dir(folder_path)
+
+                root_item = QTreeWidgetItem(folders_root, [f"📂 {album['name']} ({actual_photo_count})"])
+                root_item.setData(0, Qt.UserRole, {
+                    'type': 'folder',
+                    'id': album['id'],
+                    'name': album['name'],
+                    'folder_path': str(folder_path),
+                    'photo_count': actual_photo_count
+                })
+                root_item.setToolTip(0, f"Monitoring: {folder_path}")
+                root_item.setExpanded(False)  # 默认折叠
+
+                # 递归构建子目录树
+                self._build_directory_tree(root_item, folder_path, album['id'])
+
+                folder_count += 1
+            else:
+                # Add to Albums section
+                item = QTreeWidgetItem(albums_root, [f"📁 {album['name']} ({album['photo_count']})"])
+                item.setData(0, Qt.UserRole, {
+                    'type': 'album',
+                    'id': album['id'],
+                    'name': album['name'],
+                    'photo_count': album['photo_count']
+                })
+                album_count += 1
+
+        # Update section headers with counts
+        folders_root.setText(0, f"📂 Folders ({folder_count})")
+        albums_root.setText(0, f"📁 Albums ({album_count})")
+
+        # If no folders, hide the section
+        if folder_count == 0:
+            folders_root.setHidden(True)
+
+        # If no albums, hide the section
+        if album_count == 0:
+            albums_root.setHidden(True)
+
+    def _build_directory_tree(self, parent_item: QTreeWidgetItem, dir_path: Path, album_id: int, depth: int = 0, max_depth: int = 10):
+        """递归构建目录树结构"""
+        # 防止过深的递归
+        if depth > max_depth:
+            return
+
+        # 检查目录是否存在
+        if not dir_path.exists() or not dir_path.is_dir():
+            return
+
+        try:
+            # 统计直接在此目录下的照片（不包括子目录）
+            direct_photos = self._count_photos_in_dir_only(dir_path)
+
+            # 如果根目录直接包含照片，显示一个特殊项
+            if depth == 0 and direct_photos > 0:
+                direct_item = QTreeWidgetItem(parent_item, [f"📷 (根目录照片) ({direct_photos})"])
+                direct_item.setData(0, Qt.UserRole, {
+                    'type': 'subfolder',
+                    'album_id': album_id,
+                    'folder_path': str(dir_path),
+                    'photo_count': direct_photos,
+                    'is_root_direct': True
+                })
+                direct_item.setToolTip(0, f"直接在 {dir_path} 中的照片")
+
+            # 获取所有子目录，排序
+            subdirs = sorted([d for d in dir_path.iterdir() if d.is_dir()], key=lambda x: x.name.lower())
+
+            for subdir in subdirs:
+                # 跳过隐藏目录和系统目录
+                if subdir.name.startswith('.') or subdir.name.startswith('__'):
+                    continue
+
+                # 统计此子目录中的照片数量（包括子目录）
+                photo_count = self._count_photos_in_dir(subdir)
+
+                if photo_count > 0:  # 只显示有照片的目录
+                    # 创建子目录项
+                    subdir_item = QTreeWidgetItem(parent_item, [f"📁 {subdir.name} ({photo_count})"])
+                    subdir_item.setData(0, Qt.UserRole, {
+                        'type': 'subfolder',
+                        'album_id': album_id,
+                        'folder_path': str(subdir),
+                        'photo_count': photo_count
+                    })
+                    subdir_item.setToolTip(0, str(subdir))
+                    subdir_item.setExpanded(False)  # 默认折叠
+
+                    # 递归构建子目录的子目录
+                    self._build_directory_tree(subdir_item, subdir, album_id, depth + 1, max_depth)
+
+        except PermissionError:
+            # 没有权限访问的目录，跳过
+            pass
+        except Exception as e:
+            logger.warning(f"Error building directory tree for {dir_path}: {e}")
+
+    def _count_photos_in_dir_only(self, dir_path: Path) -> int:
+        """统计目录中的照片数量（仅该目录，不包括子目录）"""
+        count = 0
+        image_extensions = {'.jpg', '.jpeg', '.png', '.arw', '.nef', '.cr2', '.cr3', '.dng',
+                           '.JPG', '.JPEG', '.PNG', '.ARW', '.NEF', '.CR2', '.CR3', '.DNG'}
+
+        try:
+            for item in dir_path.iterdir():
+                if item.is_file() and item.suffix in image_extensions:
+                    count += 1
+        except (PermissionError, OSError):
+            pass
+
+        return count
+
+    def _count_photos_in_dir(self, dir_path: Path) -> int:
+        """统计目录中的照片数量（包括子目录）"""
+        count = 0
+        image_extensions = {'.jpg', '.jpeg', '.png', '.arw', '.nef', '.cr2', '.cr3', '.dng',
+                           '.JPG', '.JPEG', '.PNG', '.ARW', '.NEF', '.CR2', '.CR3', '.DNG'}
+
+        try:
+            for item in dir_path.rglob('*'):
+                if item.is_file() and item.suffix in image_extensions:
+                    count += 1
+        except (PermissionError, OSError):
+            pass
+
+        return count
 
     def _show_nav_context_menu(self, position):
         """Show context menu for navigator items"""
@@ -615,21 +793,36 @@ class CC_MainWindow(QMainWindow):
             return
 
         data = item.data(0, Qt.UserRole)
-        if not data or data['type'] != 'album':
+        if not data:
+            return
+
+        data_type = data.get('type')
+
+        # Don't show menu for section headers or all_photos
+        if data_type in ['section', 'all_photos']:
+            return
+
+        # Only show menu for albums and folders
+        if data_type not in ['album', 'folder']:
             return
 
         menu = QMenu()
 
-        rename_action = QAction("Rename", self)
-        rename_action.triggered.connect(lambda: self._rename_item(item, data))
-        menu.addAction(rename_action)
+        # Rename action (folders can't be renamed as they're tied to paths)
+        if data_type == 'album':
+            rename_action = QAction("Rename", self)
+            rename_action.triggered.connect(lambda: self._rename_item(item, data))
+            menu.addAction(rename_action)
 
-        delete_action = QAction("Delete", self)
+        # Delete action
+        delete_text = "Stop Monitoring && Delete" if data_type == 'folder' else "Delete"
+        delete_action = QAction(delete_text, self)
         delete_action.triggered.connect(lambda: self._delete_item(item, data))
         menu.addAction(delete_action)
 
         menu.addSeparator()
 
+        # Statistics action
         stats_action = QAction("View Statistics", self)
         stats_action.triggered.connect(lambda: self._show_statistics(data))
         menu.addAction(stats_action)
@@ -658,14 +851,43 @@ class CC_MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Error", f"Failed to rename:\n{e}")
 
     def _delete_item(self, item, data):
-        """Delete album"""
-        reply = QMessageBox.question(self, "Confirm Delete",
-            f"Delete album '{data['name']}'?\n\n(Photos will not be deleted)",
-            QMessageBox.Yes | QMessageBox.No)
+        """Delete album or folder"""
+        data_type = data.get('type')
+        item_name = data.get('name', 'item')
+        item_id = data.get('id')
+
+        if data_type == 'folder':
+            message = (f"Stop monitoring and delete folder album '{item_name}'?\n\n"
+                      f"This will:\n"
+                      f"• Stop file system monitoring\n"
+                      f"• Remove the folder from ChromaCloud\n"
+                      f"• Keep all analysis data in database\n"
+                      f"• NOT delete actual photos from disk")
+        else:
+            message = f"Delete album '{item_name}'?\n\n(Photos will not be deleted)"
+
+        reply = QMessageBox.question(self, "Confirm Delete", message,
+                                    QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
             try:
-                self.db.delete_album(data['id'])
+                # Stop folder watcher if it's a folder album
+                if data_type == 'folder' and item_id in self.folder_watchers:
+                    logger.info(f"Stopping folder watcher for album {item_id}")
+                    watcher = self.folder_watchers[item_id]
+                    watcher.stop_watching()
+                    watcher.wait()
+                    del self.folder_watchers[item_id]
+
+                # Delete from database
+                self.db.delete_album(item_id)
                 self._load_navigator()
+
+                QMessageBox.information(self, "Success",
+                    f"{'Folder' if data_type == 'folder' else 'Album'} deleted successfully!")
+
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to delete:\n{e}")
+                logger.error(f"Failed to delete: {e}", exc_info=True)
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to delete:\n{e}")
 
@@ -675,9 +897,20 @@ class CC_MainWindow(QMainWindow):
         if not data:
             return
 
-        if data['type'] == 'album':
+        data_type = data.get('type')
+
+        if data_type == 'section':
+            # Section headers are just for organization, ignore clicks
+            return
+        elif data_type == 'folder':
+            # Folder albums - show all photos in the entire folder
             self._load_album_photos(data['id'])
-        elif data['type'] == 'all_photos':
+        elif data_type == 'subfolder':
+            # Subfolder - show only photos in this specific subfolder
+            self._load_subfolder_photos(data['album_id'], data['folder_path'])
+        elif data_type == 'album':
+            self._load_album_photos(data['id'])
+        elif data_type == 'all_photos':
             self._load_all_photos()
 
     def _load_album_photos(self, album_id: int):
@@ -689,6 +922,36 @@ class CC_MainWindow(QMainWindow):
         albums = self.db.get_all_albums()
         album_name = next((a['name'] for a in albums if a['id'] == album_id), "Album")
         self.photo_header.setText(f"📁 {album_name} ({len(photos)} photos)")
+
+    def _load_subfolder_photos(self, album_id: int, folder_path: str):
+        """Load photos from a specific subfolder"""
+        self.current_album_id = album_id
+        folder = Path(folder_path)
+
+        if not folder.exists():
+            logger.warning(f"Subfolder does not exist: {folder_path}")
+            return
+
+        # 获取该文件夹中的所有照片（包括子目录）
+        image_extensions = {'.jpg', '.jpeg', '.png', '.arw', '.nef', '.cr2', '.cr3', '.dng',
+                           '.JPG', '.JPEG', '.PNG', '.ARW', '.NEF', '.CR2', '.CR3', '.DNG'}
+
+        photos = []
+        for item in folder.rglob('*'):
+            if item.is_file() and item.suffix in image_extensions:
+                photos.append(item)
+
+        photos.sort(key=lambda x: x.name.lower())
+
+        # 过滤出在数据库中的照片（属于这个 album）
+        album_photos = self.db.get_album_photos(album_id)
+        album_photo_paths = {Path(p['file_path']) for p in album_photos}
+
+        # 只显示既在文件夹中又在数据库中的照片
+        filtered_photos = [p for p in photos if p in album_photo_paths]
+
+        self._display_photos(filtered_photos)
+        self.photo_header.setText(f"📁 {folder.name} ({len(filtered_photos)} photos)")
 
     def _load_all_photos(self):
         """Load all photos from Photos folder"""
@@ -780,30 +1043,10 @@ class CC_MainWindow(QMainWindow):
             if analysis and analysis.get('face_detected'):
                 logger.info(f"Loading existing analysis for: {photo_path.name}")
 
-                num_points = analysis.get('num_points', 0)
-                mask_coverage = analysis.get('mask_coverage', 0)
-                h_mean = analysis.get('hue_mean', 0)
-                h_std = analysis.get('hue_std', 0)
-                s_mean = analysis.get('saturation_mean', 0)
-                l_mean = analysis.get('lightness_mean', 0)
-                low_light = analysis.get('lightness_low', 0)
-                mid_light = analysis.get('lightness_mid', 0)
-                high_light = analysis.get('lightness_high', 0)
+                # 自动显示分析结果
+                self._display_analysis_results(analysis)
 
-                self.results_text.setText(
-                    f"✓ Face detected! (from database)\n{num_points:,} points\nCoverage: {mask_coverage * 100:.1f}%"
-                )
-
-                self.stats_text.setText(
-                    f"Hue: {h_mean:.1f}° ± {h_std:.1f}°\n"
-                    f"Sat: {s_mean * 100:.1f}%\n"
-                    f"Light: {l_mean * 100:.1f}%\n\n"
-                    f"📊 Lightness Distribution:\n"
-                    f"  Low  (<33%): {low_light:.1f}%\n"
-                    f"  Mid (33-67%): {mid_light:.1f}%\n"
-                    f"  High (>67%): {high_light:.1f}%"
-                )
-
+                # 加载 point cloud 用于 3D 可视化
                 point_cloud_data = analysis.get('point_cloud_data')
                 if point_cloud_data:
                     self.point_cloud = pickle.loads(point_cloud_data)
@@ -819,12 +1062,71 @@ class CC_MainWindow(QMainWindow):
                 else:
                     self.visualize_btn.setEnabled(False)
             else:
-                self.results_text.setText("Select a photo to analyze")
-                self.stats_text.setText("No data")
+                # 尚未分析
+                self.results_text.setText("⏳ Analysis pending or no face detected")
+                self.stats_text.setText("Click 'Analyze' button to process this photo")
                 self.visualize_btn.setEnabled(False)
 
         except Exception as e:
             logger.error(f"Error loading analysis: {e}")
+            self.results_text.setText("❌ Error loading analysis")
+            self.stats_text.setText(str(e))
+
+    def _display_analysis_results(self, analysis: dict):
+        """显示分析结果（包括三个分布图的文本版本）"""
+        num_points = analysis.get('num_points', 0)
+        mask_coverage = analysis.get('mask_coverage', 0)
+        h_mean = analysis.get('hue_mean', 0)
+        h_std = analysis.get('hue_std', 0)
+        s_mean = analysis.get('saturation_mean', 0)
+        l_mean = analysis.get('lightness_mean', 0)
+
+        # Lightness 分布
+        low_light = analysis.get('lightness_low', 0) * 100
+        mid_light = analysis.get('lightness_mid', 0) * 100
+        high_light = analysis.get('lightness_high', 0) * 100
+
+        # Hue 分布
+        hue_very_red = analysis.get('hue_very_red', 0) * 100
+        hue_red_orange = analysis.get('hue_red_orange', 0) * 100
+        hue_normal = analysis.get('hue_normal', 0) * 100
+        hue_yellow = analysis.get('hue_yellow', 0) * 100
+        hue_very_yellow = analysis.get('hue_very_yellow', 0) * 100
+        hue_abnormal = analysis.get('hue_abnormal', 0) * 100
+
+        # Saturation 分布
+        sat_very_low = analysis.get('sat_very_low', 0) * 100
+        sat_low = analysis.get('sat_low', 0) * 100
+        sat_normal = analysis.get('sat_normal', 0) * 100
+        sat_high = analysis.get('sat_high', 0) * 100
+        sat_very_high = analysis.get('sat_very_high', 0) * 100
+
+        self.results_text.setText(
+            f"✓ Face detected! (from database)\n{num_points:,} points\nCoverage: {mask_coverage * 100:.1f}%"
+        )
+
+        self.stats_text.setText(
+            f"Hue: {h_mean * 360:.1f}° ± {h_std * 360:.1f}°\n"
+            f"Sat: {s_mean * 100:.1f}%\n"
+            f"Light: {l_mean * 100:.1f}%\n\n"
+            f"📊 Lightness Distribution:\n"
+            f"  Low  (<33%): {low_light:.1f}%\n"
+            f"  Mid (33-67%): {mid_light:.1f}%\n"
+            f"  High (>67%): {high_light:.1f}%\n\n"
+            f"🎨 Hue Distribution:\n"
+            f"  Very Red (0-10°): {hue_very_red:.1f}%\n"
+            f"  Red-Orange (10-25°): {hue_red_orange:.1f}%\n"
+            f"  Normal (25-35°): {hue_normal:.1f}%\n"
+            f"  Yellow (35-45°): {hue_yellow:.1f}%\n"
+            f"  Very Yellow (45-60°): {hue_very_yellow:.1f}%\n"
+            f"  Abnormal (>60°): {hue_abnormal:.1f}%\n\n"
+            f"💧 Saturation Distribution:\n"
+            f"  Very Low (<15%): {sat_very_low:.1f}%\n"
+            f"  Low (15-30%): {sat_low:.1f}%\n"
+            f"  Normal (30-50%): {sat_normal:.1f}%\n"
+            f"  High (50-70%): {sat_high:.1f}%\n"
+            f"  Very High (>70%): {sat_very_high:.1f}%"
+        )
 
     def _analyze_photo(self):
         """Analyze selected photo"""
@@ -1052,8 +1354,220 @@ class CC_MainWindow(QMainWindow):
         viz_window.show()
         self.viz_window = viz_window
 
+    # ========== Folder Album 功能 ==========
+
+    def _restore_folder_monitoring(self):
+        """恢复所有 Folder Album 的监控（应用启动时调用）"""
+        try:
+            albums = self.db.get_all_albums()
+            restored_count = 0
+
+            for album in albums:
+                if album.get('folder_path') and album.get('auto_scan'):
+                    folder_path = Path(album['folder_path'])
+
+                    # 检查文件夹是否仍然存在
+                    if folder_path.exists():
+                        logger.info(f"Restoring folder monitoring: {album['name']} -> {folder_path}")
+                        self._start_folder_monitoring(album['id'], folder_path)
+                        restored_count += 1
+                    else:
+                        logger.warning(f"Folder no longer exists: {folder_path}")
+
+            if restored_count > 0:
+                logger.info(f"Restored monitoring for {restored_count} folder album(s)")
+                self.statusBar().showMessage(
+                    f"Restored monitoring for {restored_count} folder(s)", 3000
+                )
+        except Exception as e:
+            logger.error(f"Failed to restore folder monitoring: {e}", exc_info=True)
+
+    def _add_folder_album(self):
+        """创建一个监控文件夹的 Album"""
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Select Folder to Monitor",
+            str(Path.home())
+        )
+        if not folder:
+            return
+
+        folder_path = Path(folder)
+        album_name = folder_path.name
+
+        # 确认对话框
+        reply = QMessageBox.question(
+            self,
+            "Create Folder Album",
+            f"Create album '{album_name}' and monitor folder:\n{folder_path}\n\n"
+            f"This will:\n"
+            f"• Scan all photos in the folder and subfolders\n"
+            f"• Automatically analyze all photos in background\n"
+            f"• Watch for new photos and analyze them automatically\n\n"
+            f"Continue?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+
+        if reply != QMessageBox.Yes:
+            return
+
+        try:
+            # 创建 Album（保存 folder_path）
+            album_id = self.db.create_album(album_name, f"Auto-monitored: {folder_path}")
+            cursor = self.db.conn.cursor()
+            cursor.execute(
+                "UPDATE albums SET folder_path = ?, auto_scan = 1, last_scan_time = CURRENT_TIMESTAMP WHERE id = ?",
+                (str(folder_path), album_id)
+            )
+            self.db.conn.commit()
+
+            # 开始监控和分析
+            self._start_folder_monitoring(album_id, folder_path)
+
+            # 刷新 UI
+            self._load_navigator()
+
+            logger.info(f"Created folder album: {album_name} -> {folder_path}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to create folder album:\n{e}")
+            logger.error(f"Failed to create folder album: {e}", exc_info=True)
+
+    def _start_folder_monitoring(self, album_id: int, folder_path: Path):
+        """开始监控文件夹"""
+        try:
+            from CC_FolderWatcher import CC_FolderWatcher
+
+            # 创建监控器
+            watcher = CC_FolderWatcher(folder_path, album_id)
+            watcher.new_photos_found.connect(
+                lambda paths: self._on_new_photos(album_id, paths)
+            )
+            watcher.photos_removed.connect(self._on_photos_removed)
+            watcher.photos_modified.connect(
+                lambda paths: self._on_photos_modified(album_id, paths)
+            )
+            watcher.scan_progress.connect(self._on_scan_progress)
+            watcher.scan_complete.connect(self._on_scan_complete)
+            watcher.error.connect(self._on_watcher_error)
+
+            # 启动监控线程（会自动进行初始扫描）
+            watcher.start()
+            self.folder_watchers[album_id] = watcher
+
+            logger.info(f"Started folder monitoring for album {album_id}: {folder_path}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to start folder monitoring:\n{e}")
+            logger.error(f"Failed to start folder monitoring: {e}", exc_info=True)
+
+    def _on_new_photos(self, album_id: int, paths: List[Path]):
+        """处理新发现的照片"""
+        logger.info(f"[_on_new_photos] New photos detected: {len(paths)} photos for album {album_id}")
+
+        # 添加到自动分析队列
+        for path in paths:
+            logger.info(f"[_on_new_photos] Adding to analyzer queue: {path.name}")
+            self.auto_analyzer.add_photo(path, album_id)
+
+        # 刷新 UI
+        logger.info(f"[_on_new_photos] Current album ID: {self.current_album_id}, New photos album ID: {album_id}")
+
+        if self.current_album_id == album_id:
+            logger.info(f"[_on_new_photos] Refreshing album photos for album {album_id}")
+            self._load_album_photos(album_id)
+
+        logger.info("[_on_new_photos] Refreshing navigator")
+        self._load_navigator()
+
+    def _on_photos_removed(self, paths: List[Path]):
+        """处理被删除的照片"""
+        logger.info(f"Photos removed: {len(paths)} photos")
+        # TODO: 可以选择从数据库中删除或标记为已删除
+        # 目前保留数据库记录
+
+    def _on_photos_modified(self, album_id: int, paths: List[Path]):
+        """处理被修改的照片（例如 Lightroom 重新导出）"""
+        logger.info(f"Photos modified: {len(paths)} photos - re-analyzing")
+
+        # 重新分析修改过的照片
+        for path in paths:
+            self.auto_analyzer.add_photo(path, album_id)
+
+        # 刷新当前显示的照片
+        if self.current_photo and self.current_photo in paths:
+            self.results_text.setText("⏳ Re-analyzing modified photo...")
+            self.stats_text.setText("Please wait...")
+
+    def _on_scan_progress(self, percentage: int, message: str):
+        """扫描进度更新"""
+        self.statusBar().showMessage(f"Scanning: {message} ({percentage}%)")
+
+    def _on_scan_complete(self, photo_count: int):
+        """扫描完成"""
+        self.statusBar().showMessage(
+            f"Scan complete: {photo_count} photos found. Starting automatic analysis...",
+            5000
+        )
+        logger.info(f"Folder scan complete: {photo_count} photos")
+
+    def _on_watcher_error(self, error_msg: str):
+        """文件夹监控错误"""
+        QMessageBox.warning(self, "Folder Watcher Error", error_msg)
+        logger.error(f"Folder watcher error: {error_msg}")
+
+    # ========== 自动分析相关 ==========
+
+    def _on_auto_analysis_complete(self, photo_id: int, results: dict):
+        """单个照片自动分析完成"""
+        logger.info(f"Auto-analysis complete for photo_id: {photo_id}")
+
+        # 如果当前正在查看这张照片，刷新显示
+        if self.current_photo:
+            try:
+                current_photo_id = self.db.add_photo(self.current_photo)
+                if current_photo_id == photo_id:
+                    logger.info("Refreshing display for current photo")
+                    self._display_analysis_results(results)
+
+                    # 尝试启用 3D 可视化
+                    if results.get('point_cloud_data'):
+                        self.point_cloud = pickle.loads(results['point_cloud_data'])
+                        self.visualize_btn.setEnabled(True)
+            except Exception as e:
+                logger.error(f"Error refreshing display: {e}")
+
+    def _on_auto_analysis_failed(self, photo_id: int, error_msg: str):
+        """自动分析失败"""
+        logger.warning(f"Auto-analysis failed for photo_id {photo_id}: {error_msg}")
+
+    def _update_analysis_progress(self, current: int, total: int):
+        """更新分析进度（状态栏）"""
+        if total > 0:
+            percentage = int((current / total) * 100)
+            self.statusBar().showMessage(f"Auto-analyzing: {current}/{total} photos ({percentage}%)")
+        else:
+            self.statusBar().showMessage("Waiting for photos to analyze...")
+
+    def _update_status(self, message: str):
+        """更新状态栏信息"""
+        self.statusBar().showMessage(message, 3000)
+
     def closeEvent(self, event):
         """Clean up on close"""
+        # 停止所有文件夹监控
+        for album_id, watcher in self.folder_watchers.items():
+            logger.info(f"Stopping folder watcher for album {album_id}")
+            watcher.stop_watching()
+            watcher.wait()
+
+        # 停止自动分析器
+        if hasattr(self, 'auto_analyzer'):
+            logger.info("Stopping auto-analyzer")
+            self.auto_analyzer.stop()
+            self.auto_analyzer.wait()
+
+        # 关闭数据库
         self.db.close()
         event.accept()
 

@@ -41,6 +41,9 @@ class CC_Database:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
                 description TEXT,
+                folder_path TEXT,
+                auto_scan INTEGER DEFAULT 0,
+                last_scan_time TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -116,6 +119,11 @@ class CC_Database:
                 hue_yellow REAL,
                 hue_very_yellow REAL,
                 hue_abnormal REAL,
+                sat_very_low REAL,
+                sat_low REAL,
+                sat_normal REAL,
+                sat_high REAL,
+                sat_very_high REAL,
                 point_cloud_data BLOB,
                 FOREIGN KEY (photo_id) REFERENCES photos(id) ON DELETE CASCADE
             )
@@ -146,6 +154,39 @@ class CC_Database:
             logger.info("Added hue distribution columns to existing database")
         except sqlite3.OperationalError:
             # Columns already exist
+            pass
+
+        # Add saturation distribution columns (for existing databases)
+        try:
+            cursor.execute("ALTER TABLE analysis_results ADD COLUMN sat_very_low REAL DEFAULT 0.0")
+            cursor.execute("ALTER TABLE analysis_results ADD COLUMN sat_low REAL DEFAULT 0.0")
+            cursor.execute("ALTER TABLE analysis_results ADD COLUMN sat_normal REAL DEFAULT 0.0")
+            cursor.execute("ALTER TABLE analysis_results ADD COLUMN sat_high REAL DEFAULT 0.0")
+            cursor.execute("ALTER TABLE analysis_results ADD COLUMN sat_very_high REAL DEFAULT 0.0")
+            self.conn.commit()
+            logger.info("Added saturation distribution columns to existing database")
+        except sqlite3.OperationalError:
+            # Columns already exist
+            pass
+
+        # Add folder monitoring fields to albums table (for existing databases)
+        try:
+            cursor.execute("ALTER TABLE albums ADD COLUMN folder_path TEXT")
+            cursor.execute("ALTER TABLE albums ADD COLUMN auto_scan INTEGER DEFAULT 0")
+            cursor.execute("ALTER TABLE albums ADD COLUMN last_scan_time TIMESTAMP")
+            self.conn.commit()
+            logger.info("Added folder monitoring columns to albums table")
+        except sqlite3.OperationalError:
+            # Columns already exist
+            pass
+
+        # Create indexes for better performance
+        try:
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_albums_folder ON albums(folder_path)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_photos_path ON photos(file_path)")
+            self.conn.commit()
+            logger.info("Created performance indexes")
+        except sqlite3.OperationalError:
             pass
 
     # ========== Album Operations ==========

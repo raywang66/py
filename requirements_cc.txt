@@ -48,6 +48,11 @@ taichi>=1.6.0               # High-performance GPU computing for 3D rendering
 # RAW FILE SUPPORT
 # ============================================================================
 rawpy>=0.18.0               # RAW file processing (ARW, CR2, NEF)
+
+# ============================================================================
+# FILE SYSTEM MONITORING
+# ============================================================================
+watchdog>=3.0.0             # File system event monitoring for folder auto-scan
 imageio>=2.31.0             # Image I/O backend
 
 # ============================================================================
