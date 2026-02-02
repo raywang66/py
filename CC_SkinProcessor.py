@@ -37,9 +37,9 @@ from cc_config import (
     CC_LOG_LEVEL
 )
 
-# Configure logger
-logging.basicConfig(level=CC_LOG_LEVEL)
+# Note: logging is configured in CC_Main.py - do not call basicConfig here
 logger = logging.getLogger("CC_SkinProcessor")
+logger.setLevel(CC_LOG_LEVEL)  # Set level for this module
 
 
 class CC_MediaPipeFaceDetector:

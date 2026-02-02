@@ -189,6 +189,57 @@ class CC_Database:
         except sqlite3.OperationalError:
             pass
 
+        # Thumbnail cache table for fast loading
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS thumbnail_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                photo_path TEXT NOT NULL UNIQUE,
+                photo_mtime REAL NOT NULL,
+                thumbnail_data BLOB NOT NULL,
+                thumbnail_width INTEGER NOT NULL,
+                thumbnail_height INTEGER NOT NULL,
+                created_at REAL NOT NULL,
+                accessed_at REAL NOT NULL
+            )
+        """)
+
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_thumbnail_path ON thumbnail_cache(photo_path)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_thumbnail_mtime ON thumbnail_cache(photo_mtime)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_thumbnail_accessed ON thumbnail_cache(accessed_at)")
+
+        # Add file_mtime to photos table for change detection
+        try:
+            cursor.execute("ALTER TABLE photos ADD COLUMN file_mtime REAL")
+            self.conn.commit()
+            logger.info("Added file_mtime column to photos table")
+        except sqlite3.OperationalError:
+            # Column already exists
+            pass
+
+        # Folder cache table for performance optimization
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS folder_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                album_id INTEGER NOT NULL,
+                folder_path TEXT NOT NULL,
+                parent_folder_path TEXT,
+                photo_count INTEGER DEFAULT 0,
+                direct_photo_count INTEGER DEFAULT 0,
+                last_scan_time REAL,
+                FOREIGN KEY (album_id) REFERENCES albums(id) ON DELETE CASCADE
+            )
+        """)
+
+        # Create indexes for folder cache
+        try:
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_folder_cache_album ON folder_cache(album_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_folder_cache_path ON folder_cache(folder_path)")
+            cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_folder_cache_unique ON folder_cache(album_id, folder_path)")
+            self.conn.commit()
+            logger.info("Created folder cache table and indexes")
+        except sqlite3.OperationalError:
+            pass
+
     # ========== Album Operations ==========
 
     def create_album(self, name: str, description: str = "") -> int:
@@ -464,6 +515,141 @@ class CC_Database:
         """, (project_id,))
         row = cursor.fetchone()
         return dict(row) if row else {}
+
+    # ========== Folder Cache Operations (Performance Optimization) ==========
+
+    def get_folder_structure(self, album_id: int) -> List[Dict]:
+        """Get cached folder structure for an album (instant)"""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT folder_path, parent_folder_path, 
+                   photo_count, direct_photo_count, last_scan_time
+            FROM folder_cache
+            WHERE album_id = ?
+            ORDER BY folder_path
+        """, (album_id,))
+        return [dict(row) for row in cursor.fetchall()]
+
+    def update_folder_cache(self, album_id: int, folder_path: str,
+                           photo_count: int, direct_count: int,
+                           parent_path: Optional[str] = None):
+        """Update folder cache entry"""
+        import time
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO folder_cache 
+            (album_id, folder_path, parent_folder_path, photo_count, direct_photo_count, last_scan_time)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (album_id, folder_path, parent_path, photo_count, direct_count, time.time()))
+        self.conn.commit()
+
+    def clear_folder_cache(self, album_id: int):
+        """Clear folder cache for an album"""
+        cursor = self.conn.cursor()
+        cursor.execute("DELETE FROM folder_cache WHERE album_id = ?", (album_id,))
+        self.conn.commit()
+
+    def has_folder_cache(self, album_id: int) -> bool:
+        """Check if album has cached folder structure"""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM folder_cache WHERE album_id = ?", (album_id,))
+        count = cursor.fetchone()[0]
+        return count > 0
+
+    # ========== Thumbnail Cache Methods ==========
+
+    def get_thumbnail_cache(self, photo_path: str) -> Optional[Dict]:
+        """
+        Get cached thumbnail for a photo
+        Returns dict with thumbnail_data, photo_mtime, width, height or None
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT thumbnail_data, photo_mtime, thumbnail_width, thumbnail_height
+            FROM thumbnail_cache
+            WHERE photo_path = ?
+        """, (photo_path,))
+
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        return None
+
+    def save_thumbnail_cache(self, photo_path: str, photo_mtime: float,
+                            thumbnail_data: bytes, width: int, height: int):
+        """Save thumbnail to cache"""
+        import time
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO thumbnail_cache 
+            (photo_path, photo_mtime, thumbnail_data, thumbnail_width, thumbnail_height,
+             created_at, accessed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (photo_path, photo_mtime, thumbnail_data, width, height, time.time(), time.time()))
+        self.conn.commit()
+
+    def update_thumbnail_access_time(self, photo_path: str):
+        """Update last accessed time for LRU cache management"""
+        import time
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            UPDATE thumbnail_cache 
+            SET accessed_at = ? 
+            WHERE photo_path = ?
+        """, (time.time(), photo_path))
+        self.conn.commit()
+
+    def invalidate_thumbnail_cache(self, photo_path: str):
+        """Remove thumbnail from cache (e.g., when file is modified)"""
+        cursor = self.conn.cursor()
+        cursor.execute("DELETE FROM thumbnail_cache WHERE photo_path = ?", (photo_path,))
+        self.conn.commit()
+
+    def clear_thumbnail_cache(self):
+        """Clear all thumbnail cache (for maintenance)"""
+        cursor = self.conn.cursor()
+        cursor.execute("DELETE FROM thumbnail_cache")
+        self.conn.commit()
+        logger.info("Thumbnail cache cleared")
+
+    def get_thumbnail_cache_stats(self) -> Dict:
+        """Get thumbnail cache statistics"""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT 
+                COUNT(*) as count,
+                SUM(LENGTH(thumbnail_data)) as total_size,
+                AVG(LENGTH(thumbnail_data)) as avg_size
+            FROM thumbnail_cache
+        """)
+        row = cursor.fetchone()
+        return dict(row) if row else {'count': 0, 'total_size': 0, 'avg_size': 0}
+
+    def cleanup_old_thumbnail_cache(self, days: int = 90):
+        """
+        Clean up thumbnails not accessed for specified days (LRU cleanup)
+        """
+        import time
+        threshold = time.time() - (days * 24 * 3600)
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            DELETE FROM thumbnail_cache 
+            WHERE accessed_at < ?
+        """, (threshold,))
+        deleted = cursor.rowcount
+        self.conn.commit()
+        logger.info(f"Cleaned up {deleted} old thumbnail cache entries")
+        return deleted
+
+    def update_photo_mtime(self, photo_path: str, mtime: float):
+        """Update file modification time for a photo"""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            UPDATE photos 
+            SET file_mtime = ? 
+            WHERE file_path = ?
+        """, (mtime, photo_path))
+        self.conn.commit()
 
     def close(self):
         """Close database connection"""

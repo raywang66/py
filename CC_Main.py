@@ -15,6 +15,7 @@ Features:
 
 import sys
 import logging
+import time
 from pathlib import Path
 from typing import Optional, List
 import pickle
@@ -36,14 +37,94 @@ from cc_config import CC_PROJECT_NAME, CC_VERSION
 from CC_SkinProcessor import CC_SkinProcessor, MEDIAPIPE_AVAILABLE, RAWPY_AVAILABLE
 from CC_Database import CC_Database
 
-# Configure logger
-logging.basicConfig(level=logging.INFO)
+# Configure logger with relative timing (ms since program start)
+# Use UTF-8 encoding to handle emojis and Unicode characters
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(relativeCreated)8d ms [%(name)s] %(message)s',
+    handlers=[
+        logging.FileHandler("chromacloud.log", mode='w', encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)  # Use stdout with UTF-8
+    ]
+)
+
+# Ensure console output is UTF-8
+if sys.stdout.encoding != 'utf-8':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
 logger = logging.getLogger("CC_MainApp")
 
 
 # =============================================================================
 # Thread Classes
 # =============================================================================
+
+class FolderScanWorker(QThread):
+    """Background thread for scanning folder structure (performance optimization)"""
+    scan_completed = Signal(int, dict)  # album_id, structure
+    progress_updated = Signal(str)      # status message
+
+    def __init__(self, album_id: int, folder_path: str):
+        super().__init__()
+        self.album_id = album_id
+        self.folder_path = Path(folder_path)
+        self.image_extensions = {'.jpg', '.jpeg', '.png', '.arw', '.nef',
+                                '.cr2', '.cr3', '.dng',
+                                '.JPG', '.JPEG', '.PNG', '.ARW', '.NEF',
+                                '.CR2', '.CR3', '.DNG'}
+
+    def run(self):
+        """Scan folder structure in background"""
+        try:
+            logger.info(f"Background scan started for album {self.album_id}: {self.folder_path}")
+            structure = self._scan_folder_structure(self.folder_path)
+            self.scan_completed.emit(self.album_id, structure)
+            logger.info(f"Background scan completed for album {self.album_id}")
+        except Exception as e:
+            logger.error(f"Background scan error: {e}")
+
+    def _scan_folder_structure(self, dir_path: Path, parent_path: Optional[str] = None) -> dict:
+        """Recursively scan folder structure"""
+        structure = {
+            'path': str(dir_path),
+            'parent_path': parent_path,
+            'direct_photos': 0,
+            'total_photos': 0,
+            'subdirs': []
+        }
+
+        if not dir_path.exists() or not dir_path.is_dir():
+            return structure
+
+        try:
+            # Count direct photos
+            for item in dir_path.iterdir():
+                if item.is_file() and item.suffix in self.image_extensions:
+                    structure['direct_photos'] += 1
+
+            structure['total_photos'] = structure['direct_photos']
+
+            # Recursively scan subdirectories
+            subdirs = sorted([d for d in dir_path.iterdir() if d.is_dir()],
+                           key=lambda x: x.name.lower())
+
+            for subdir in subdirs:
+                # Skip hidden and system directories
+                if subdir.name.startswith('.') or subdir.name.startswith('__'):
+                    continue
+
+                sub_structure = self._scan_folder_structure(subdir, str(dir_path))
+                if sub_structure['total_photos'] > 0:
+                    structure['subdirs'].append(sub_structure)
+                    structure['total_photos'] += sub_structure['total_photos']
+
+        except (PermissionError, OSError) as e:
+            logger.warning(f"Error scanning {dir_path}: {e}")
+
+        return structure
+
 
 class CC_ProcessingThread(QThread):
     """Background thread for single image processing"""
@@ -159,11 +240,12 @@ class CC_BatchProcessingThread(QThread):
 
 
 class CC_PhotoThumbnail(QFrame):
-    """Photo thumbnail widget with proper aspect ratio"""
+    """Photo thumbnail widget with proper aspect ratio - OPTIMIZED with lazy loading and database cache"""
 
-    def __init__(self, image_path: Path, parent=None):
+    def __init__(self, image_path: Path, db=None, parent=None):
         super().__init__(parent)
         self.image_path = image_path
+        self.db = db  # Database for thumbnail cache
         self.setFrameStyle(QFrame.NoFrame)
         self.setLineWidth(0)
         self.setFixedSize(220, 270)
@@ -177,7 +259,11 @@ class CC_PhotoThumbnail(QFrame):
         self.thumbnail_label.setAlignment(Qt.AlignCenter)
         self.thumbnail_label.setStyleSheet("background-color: transparent; border: none;")
 
-        self._load_thumbnail()
+        # Show placeholder immediately
+        self._show_placeholder()
+
+        # Load thumbnail asynchronously
+        self._load_thumbnail_async()
 
         # Filename
         filename_label = QLabel(image_path.name)
@@ -199,10 +285,81 @@ class CC_PhotoThumbnail(QFrame):
             }
         """)
 
+    def _show_placeholder(self):
+        """Show placeholder while loading"""
+        pixmap = QPixmap(210, 210)
+        pixmap.fill(QColor(240, 240, 240))
+
+        # Draw loading icon (simple gray square with text)
+        from PySide6.QtGui import QPainter, QFont
+        painter = QPainter(pixmap)
+        painter.setPen(QColor(180, 180, 180))
+        font = QFont("Segoe UI", 9)
+        painter.setFont(font)
+        painter.drawText(pixmap.rect(), Qt.AlignCenter, "Loading...")
+        painter.end()
+
+        self.thumbnail_label.setPixmap(pixmap)
+
+    def _load_thumbnail_async(self):
+        """Load thumbnail in background using QTimer (non-blocking)"""
+        from PySide6.QtCore import QTimer
+        # Schedule thumbnail loading with slight delay to not block UI
+        QTimer.singleShot(1, self._load_thumbnail)
+
     def _load_thumbnail(self):
-        """Load thumbnail preserving aspect ratio"""
+        """Load thumbnail preserving aspect ratio - WITH DATABASE CACHE"""
+        thumbnail_start = time.time()
+        thumbnail_bytes = None
+        cache_hit = False
+
         try:
-            if self.image_path.suffix.lower() in {'.arw', '.nef', '.cr2', '.cr3', '.dng'}:
+            # ⚡️ STEP 1: Try to load from database cache
+            if self.db and self.image_path.exists():
+                file_mtime = self.image_path.stat().st_mtime
+                cache = self.db.get_thumbnail_cache(str(self.image_path))
+
+                if cache and cache['photo_mtime'] == file_mtime:
+                    # Cache hit! Load from database (fast!)
+                    from io import BytesIO
+                    img = Image.open(BytesIO(cache['thumbnail_data']))
+                    cache_hit = True
+                    logger.debug(f"Cache HIT: {self.image_path.name}")
+
+                    # Update access time for LRU
+                    self.db.update_thumbnail_access_time(str(self.image_path))
+
+                    # Convert to QPixmap and display
+                    data = img.tobytes('raw', 'RGB')
+                    qimage = QImage(data, img.width, img.height, img.width * 3, QImage.Format_RGB888)
+                    pixmap = QPixmap.fromImage(qimage)
+                    self.thumbnail_label.setPixmap(pixmap)
+
+                    # Track statistics
+                    thumbnail_elapsed = time.time() - thumbnail_start
+                    if hasattr(CC_PhotoThumbnail, '_cache_hit_count'):
+                        CC_PhotoThumbnail._cache_hit_count += 1
+                        CC_PhotoThumbnail._cache_hit_time += thumbnail_elapsed
+                    else:
+                        CC_PhotoThumbnail._cache_hit_count = 1
+                        CC_PhotoThumbnail._cache_hit_time = thumbnail_elapsed
+
+                    return  # Done!
+
+            # ⚡️ STEP 2: Cache miss - generate thumbnail
+            logger.debug(f"Cache MISS: {self.image_path.name} - generating...")
+
+            # Fast path: try to use embedded thumbnail for JPEG
+            if self.image_path.suffix.lower() in {'.jpg', '.jpeg'}:
+                img = Image.open(self.image_path)
+
+                # Try to extract embedded thumbnail (much faster)
+                try:
+                    img.draft('RGB', (210, 210))  # Fast low-quality load
+                except:
+                    pass
+
+            elif self.image_path.suffix.lower() in {'.arw', '.nef', '.cr2', '.cr3', '.dng'}:
                 if RAWPY_AVAILABLE:
                     import rawpy
                     with rawpy.imread(str(self.image_path)) as raw:
@@ -221,7 +378,7 @@ class CC_PhotoThumbnail(QFrame):
             else:
                 img = Image.open(self.image_path)
 
-            # Resize preserving aspect ratio
+            # Resize preserving aspect ratio - use LANCZOS for quality
             img.thumbnail((210, 210), Image.Resampling.LANCZOS)
 
             if img.mode != 'RGB':
@@ -234,8 +391,60 @@ class CC_PhotoThumbnail(QFrame):
 
             self.thumbnail_label.setPixmap(pixmap)
 
+            # ⚡️ STEP 3: Save to database cache for next time
+            if self.db and self.image_path.exists():
+                from io import BytesIO
+                buffer = BytesIO()
+                img.save(buffer, format='JPEG', quality=85, optimize=True)
+                thumbnail_data = buffer.getvalue()
+
+                file_mtime = self.image_path.stat().st_mtime
+                self.db.save_thumbnail_cache(
+                    str(self.image_path),
+                    file_mtime,
+                    thumbnail_data,
+                    img.width,
+                    img.height
+                )
+                logger.debug(f"Cached: {self.image_path.name} ({len(thumbnail_data)/1024:.1f} KB)")
+
+            # 📊 Calculate thumbnail size (for profiling)
+            from io import BytesIO
+            buffer = BytesIO()
+            img.save(buffer, format='JPEG', quality=85)
+            thumbnail_bytes = buffer.getvalue()
+            thumbnail_size = len(thumbnail_bytes)
+
+            # 📊 Profile thumbnail loading time and size
+            thumbnail_elapsed = time.time() - thumbnail_start
+
+            # Track global statistics (for database storage evaluation)
+            if not hasattr(CC_PhotoThumbnail, '_total_thumbnail_time'):
+                CC_PhotoThumbnail._total_thumbnail_time = 0
+                CC_PhotoThumbnail._total_thumbnail_size = 0
+                CC_PhotoThumbnail._thumbnail_count = 0
+                CC_PhotoThumbnail._thumbnail_samples = []
+                CC_PhotoThumbnail._cache_hit_count = 0
+                CC_PhotoThumbnail._cache_hit_time = 0
+                CC_PhotoThumbnail._cache_miss_count = 0
+                CC_PhotoThumbnail._cache_miss_time = 0
+
+            CC_PhotoThumbnail._total_thumbnail_time += thumbnail_elapsed
+            CC_PhotoThumbnail._total_thumbnail_size += thumbnail_size
+            CC_PhotoThumbnail._thumbnail_count += 1
+            CC_PhotoThumbnail._cache_miss_count += 1
+            CC_PhotoThumbnail._cache_miss_time += thumbnail_elapsed
+
+            # Keep some samples for statistics
+            if len(CC_PhotoThumbnail._thumbnail_samples) < 10:
+                CC_PhotoThumbnail._thumbnail_samples.append({
+                    'name': self.image_path.name,
+                    'time': thumbnail_elapsed,
+                    'size': thumbnail_size
+                })
+
         except Exception as e:
-            logger.error(f"Failed to load thumbnail: {e}")
+            logger.error(f"Failed to load thumbnail for {self.image_path.name}: {e}")
             pixmap = QPixmap(210, 210)
             pixmap.fill(QColor(245, 245, 245))
             self.thumbnail_label.setPixmap(pixmap)
@@ -267,6 +476,11 @@ class CC_MainWindow(QMainWindow):
         self.current_photo_rgb: Optional[np.ndarray] = None
         self.current_mask: Optional[np.ndarray] = None
         self.dark_mode: bool = False  # Light mode by default
+        self._scan_workers: List[FolderScanWorker] = []  # Background scan workers
+
+        # ⚠️ TEMPORARY: Disable FolderWatcher to focus on UI rendering performance
+        # TODO: Re-enable after UI performance is optimized
+        self.ENABLE_FOLDER_WATCHER = False  # 🔧 Set to True to enable file monitoring
 
         # Folder monitoring and auto-analysis
         self.folder_watchers = {}  # album_id -> CC_FolderWatcher
@@ -536,6 +750,9 @@ class CC_MainWindow(QMainWindow):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(10, 10, 10, 10)
 
+        # Store reference for loading controls
+        self.photo_panel_layout = layout
+
         # Header
         header_layout = QHBoxLayout()
         self.photo_header = QLabel("📸 All Photos")
@@ -553,14 +770,16 @@ class CC_MainWindow(QMainWindow):
 
         layout.addLayout(header_layout)
 
-        # Photo grid
+        # Photo grid - VIRTUAL SCROLLING for Photos-like performance! ⚡️⚡️⚡️
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
-        self.photo_grid_widget = QWidget()
-        self.photo_grid = QGridLayout(self.photo_grid_widget)
-        self.photo_grid.setSpacing(10)
+        # Use virtual photo grid instead of traditional grid
+        from CC_VirtualPhotoGrid import SimpleVirtualPhotoGrid
+        self.photo_grid_widget = SimpleVirtualPhotoGrid(db=self.db)
+        self.photo_grid_widget.photo_clicked.connect(self._select_photo)
+        self.photo_grid = self.photo_grid_widget  # Alias for compatibility
 
         scroll.setWidget(self.photo_grid_widget)
         layout.addWidget(scroll)
@@ -627,7 +846,7 @@ class CC_MainWindow(QMainWindow):
         return panel
 
     def _load_navigator(self):
-        """Load albums and folders in separate sections"""
+        """Load albums and folders in separate sections - OPTIMIZED with cache"""
         self.nav_tree.clear()
 
         # All Photos (root level)
@@ -654,25 +873,36 @@ class CC_MainWindow(QMainWindow):
             is_folder_album = album.get('folder_path') and album.get('auto_scan')
 
             if is_folder_album:
-                # Add to Folders section with directory tree structure
+                # ⚡️ OPTIMIZED: Use cache for instant loading
                 folder_path = Path(album.get('folder_path', ''))
 
-                # 使用实时扫描的照片数量，确保与子目录数量一致
-                actual_photo_count = self._count_photos_in_dir(folder_path)
+                # Try to load from cache first
+                cached_structure = self.db.get_folder_structure(album['id'])
 
-                root_item = QTreeWidgetItem(folders_root, [f"📂 {album['name']} ({actual_photo_count})"])
+                if cached_structure:
+                    # Has cache - instant display
+                    photo_count = cached_structure[0]['photo_count'] if cached_structure else album['photo_count']
+                else:
+                    # No cache - use database value temporarily
+                    photo_count = album['photo_count']
+
+                root_item = QTreeWidgetItem(folders_root, [f"📂 {album['name']} ({photo_count})"])
                 root_item.setData(0, Qt.UserRole, {
                     'type': 'folder',
                     'id': album['id'],
                     'name': album['name'],
                     'folder_path': str(folder_path),
-                    'photo_count': actual_photo_count
+                    'photo_count': photo_count
                 })
                 root_item.setToolTip(0, f"Monitoring: {folder_path}")
                 root_item.setExpanded(False)  # 默认折叠
 
-                # 递归构建子目录树
-                self._build_directory_tree(root_item, folder_path, album['id'])
+                # ⚡️ Build tree from cache (instant)
+                if cached_structure:
+                    self._build_tree_from_cache(root_item, album['id'], cached_structure)
+
+                # 🔄 Schedule background scan (non-blocking)
+                self._schedule_background_scan(album['id'], str(folder_path))
 
                 folder_count += 1
             else:
@@ -785,6 +1015,140 @@ class CC_MainWindow(QMainWindow):
             pass
 
         return count
+
+    # ========== Performance Optimization Methods ==========
+
+    def _build_tree_from_cache(self, parent_item: QTreeWidgetItem,
+                               album_id: int, cached_structure: List[dict]):
+        """Build directory tree from cache - instant"""
+        if not cached_structure:
+            return
+
+        # Organize by hierarchy
+        path_to_item = {}
+        root_path = None
+
+        # Find root path
+        for folder_info in cached_structure:
+            if folder_info.get('parent_folder_path') is None:
+                root_path = folder_info['folder_path']
+                break
+
+        for folder_info in cached_structure:
+            folder_path = folder_info['folder_path']
+            parent_path = folder_info.get('parent_folder_path')
+            photo_count = folder_info['photo_count']
+            direct_count = folder_info['direct_photo_count']
+
+            if parent_path is None:
+                # Root directory's direct photos
+                if direct_count > 0:
+                    direct_item = QTreeWidgetItem(parent_item,
+                        [f"📷 (根目录照片) ({direct_count})"])
+                    direct_item.setData(0, Qt.UserRole, {
+                        'type': 'subfolder',
+                        'album_id': album_id,
+                        'folder_path': folder_path,
+                        'photo_count': direct_count,
+                        'is_root_direct': True
+                    })
+                path_to_item[folder_path] = parent_item
+            else:
+                # Subfolder
+                folder_name = Path(folder_path).name
+                tree_parent = path_to_item.get(parent_path, parent_item)
+
+                folder_item = QTreeWidgetItem(tree_parent,
+                    [f"📁 {folder_name} ({photo_count})"])
+                folder_item.setData(0, Qt.UserRole, {
+                    'type': 'subfolder',
+                    'album_id': album_id,
+                    'folder_path': folder_path,
+                    'photo_count': photo_count
+                })
+                folder_item.setToolTip(0, folder_path)
+                folder_item.setExpanded(False)
+
+                path_to_item[folder_path] = folder_item
+
+    def _schedule_background_scan(self, album_id: int, folder_path: str):
+        """Schedule background folder scan (non-blocking)"""
+        worker = FolderScanWorker(album_id, folder_path)
+        worker.scan_completed.connect(self._on_scan_completed)
+        worker.start()
+
+        # Keep reference to prevent garbage collection
+        if not hasattr(self, '_scan_workers'):
+            self._scan_workers = []
+        self._scan_workers.append(worker)
+
+    def _on_scan_completed(self, album_id: int, structure: dict):
+        """Background scan completed - update cache and UI"""
+        try:
+            # Clear old cache
+            self.db.clear_folder_cache(album_id)
+
+            # Update cache recursively
+            self._update_folder_cache_recursive(album_id, structure)
+
+            # Refresh UI for this album (only if needed)
+            self._refresh_album_tree(album_id, structure)
+
+            logger.info(f"Cache updated for album {album_id}")
+        except Exception as e:
+            logger.error(f"Error updating cache: {e}")
+
+    def _update_folder_cache_recursive(self, album_id: int, structure: dict):
+        """Recursively update folder cache"""
+        folder_path = structure['path']
+        parent_path = structure.get('parent_path')
+        total_photos = structure['total_photos']
+        direct_photos = structure['direct_photos']
+
+        # Update this folder
+        self.db.update_folder_cache(album_id, folder_path, total_photos,
+                                    direct_photos, parent_path)
+
+        # Update subdirectories
+        for subdir in structure.get('subdirs', []):
+            self._update_folder_cache_recursive(album_id, subdir)
+
+    def _refresh_album_tree(self, album_id: int, structure: dict):
+        """Refresh album tree in navigator if counts changed"""
+        # Find the album item in navigator
+        root = self.nav_tree.invisibleRootItem()
+
+        def find_album_item(parent, target_album_id):
+            for i in range(parent.childCount()):
+                item = parent.child(i)
+                data = item.data(0, Qt.UserRole)
+                if data and data.get('type') == 'folder' and data.get('id') == target_album_id:
+                    return item
+                # Recursively search
+                result = find_album_item(item, target_album_id)
+                if result:
+                    return result
+            return None
+
+        album_item = find_album_item(root, album_id)
+        if album_item:
+            data = album_item.data(0, Qt.UserRole)
+            old_count = data.get('photo_count', 0)
+            new_count = structure['total_photos']
+
+            # Only update if count changed
+            if old_count != new_count:
+                album_name = data.get('name', 'Unknown')
+                album_item.setText(0, f"📂 {album_name} ({new_count})")
+                data['photo_count'] = new_count
+                album_item.setData(0, Qt.UserRole, data)
+
+                # Clear and rebuild children
+                album_item.takeChildren()
+                cached_structure = self.db.get_folder_structure(album_id)
+                self._build_tree_from_cache(album_item, album_id, cached_structure)
+
+                logger.info(f"Updated album {album_name}: {old_count} -> {new_count} photos")
 
     def _show_nav_context_menu(self, position):
         """Show context menu for navigator items"""
@@ -924,31 +1288,28 @@ class CC_MainWindow(QMainWindow):
         self.photo_header.setText(f"📁 {album_name} ({len(photos)} photos)")
 
     def _load_subfolder_photos(self, album_id: int, folder_path: str):
-        """Load photos from a specific subfolder"""
+        """Load photos from a specific subfolder - OPTIMIZED to use database only"""
         self.current_album_id = album_id
         folder = Path(folder_path)
 
-        if not folder.exists():
-            logger.warning(f"Subfolder does not exist: {folder_path}")
-            return
-
-        # 获取该文件夹中的所有照片（包括子目录）
-        image_extensions = {'.jpg', '.jpeg', '.png', '.arw', '.nef', '.cr2', '.cr3', '.dng',
-                           '.JPG', '.JPEG', '.PNG', '.ARW', '.NEF', '.CR2', '.CR3', '.DNG'}
-
-        photos = []
-        for item in folder.rglob('*'):
-            if item.is_file() and item.suffix in image_extensions:
-                photos.append(item)
-
-        photos.sort(key=lambda x: x.name.lower())
-
-        # 过滤出在数据库中的照片（属于这个 album）
+        # ⚡️ OPTIMIZED: Load from database only, no filesystem scanning
+        # Get all photos in this album
         album_photos = self.db.get_album_photos(album_id)
-        album_photo_paths = {Path(p['file_path']) for p in album_photos}
 
-        # 只显示既在文件夹中又在数据库中的照片
-        filtered_photos = [p for p in photos if p in album_photo_paths]
+        # Filter photos that are in this specific subfolder (including subdirectories)
+        folder_path_str = str(folder).lower()
+        filtered_photos = []
+
+        for photo in album_photos:
+            photo_path = Path(photo['file_path'])
+            photo_dir_str = str(photo_path.parent).lower()
+
+            # Check if photo is in this folder or its subdirectories
+            if photo_dir_str == folder_path_str or photo_dir_str.startswith(folder_path_str + '\\'):
+                filtered_photos.append(photo_path)
+
+        # Sort by filename
+        filtered_photos.sort(key=lambda x: x.name.lower())
 
         self._display_photos(filtered_photos)
         self.photo_header.setText(f"📁 {folder.name} ({len(filtered_photos)} photos)")
@@ -973,26 +1334,166 @@ class CC_MainWindow(QMainWindow):
         self.photo_header.setText(f"📷 All Photos ({len(photos)})")
 
     def _display_photos(self, photo_paths: List[Path]):
-        """Display photos in grid"""
-        # Clear grid
-        while self.photo_grid.count():
-            item = self.photo_grid.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        """
+        Display photos using VIRTUAL SCROLLING - Photos-like performance! ⚡️⚡️⚡️
+        Only creates visible widgets, not all 1106!
+        """
+        from PySide6.QtCore import QTimer
+        import time
 
-        # Add photos
-        row, col = 0, 0
-        max_cols = 3
+        start_time = time.time()
 
-        for photo_path in photo_paths:
-            thumbnail = CC_PhotoThumbnail(photo_path)
-            thumbnail.mousePressEvent = lambda event, path=photo_path: self._select_photo(path)
-            self.photo_grid.addWidget(thumbnail, row, col)
+        total_count = len(photo_paths)
 
-            col += 1
-            if col >= max_cols:
-                col = 0
-                row += 1
+        if total_count == 0:
+            self.photo_grid_widget.clear()
+            return
+
+        # Show loading info
+        if total_count > 30:
+            logger.info(f"⚡️ Virtual loading {total_count} photos...")
+            self._show_loading_controls(total_count)
+
+        # ⚡️ KEY DIFFERENCE: Virtual grid handles everything!
+        # It only creates ~30 visible widgets, not all 1106!
+        self.photo_grid_widget.set_photos(photo_paths)
+
+        elapsed = time.time() - start_time
+        logger.info(f"⚡️ Virtual grid ready in {elapsed*1000:.0f}ms - UI fully responsive!")
+
+        # Update loading controls
+        if total_count > 30:
+            # Schedule hiding loading controls after background loading completes
+            estimated_total_time = total_count * 0.01  # Rough estimate
+            QTimer.singleShot(int(estimated_total_time * 1000), self._hide_loading_controls)
+
+        # Report thumbnail statistics
+        if total_count > 30:
+            QTimer.singleShot(100, lambda: self._report_thumbnail_statistics(total_count))
+
+    # ========== OLD BATCH LOADING METHOD - DEPRECATED ==========
+    # Virtual scrolling grid (SimpleVirtualPhotoGrid) now handles all loading
+    # This method is no longer called
+
+    def _report_thumbnail_statistics(self, total_count: int):
+        """Report thumbnail generation statistics and cache performance"""
+        # Cache statistics
+        cache_hit_count = getattr(CC_PhotoThumbnail, '_cache_hit_count', 0)
+        cache_miss_count = getattr(CC_PhotoThumbnail, '_cache_miss_count', 0)
+        cache_hit_time = getattr(CC_PhotoThumbnail, '_cache_hit_time', 0)
+        cache_miss_time = getattr(CC_PhotoThumbnail, '_cache_miss_time', 0)
+
+        total_cached = cache_hit_count + cache_miss_count
+
+        if total_cached > 0:
+            cache_hit_rate = (cache_hit_count / total_cached) * 100
+            avg_cache_hit_time = cache_hit_time / cache_hit_count if cache_hit_count > 0 else 0
+            avg_cache_miss_time = cache_miss_time / cache_miss_count if cache_miss_count > 0 else 0
+
+            logger.info(f"")
+            logger.info(f"📊 ========== Thumbnail Cache Performance ==========")
+            logger.info(f"📊 Total thumbnails loaded: {total_cached}")
+            logger.info(f"📊 Cache hits: {cache_hit_count} ({cache_hit_rate:.1f}%)")
+            logger.info(f"📊 Cache misses: {cache_miss_count} ({100-cache_hit_rate:.1f}%)")
+            logger.info(f"")
+            logger.info(f"⚡ Performance:")
+            if cache_hit_count > 0:
+                logger.info(f"   • Avg cache hit time: {avg_cache_hit_time*1000:.1f}ms ⚡️")
+            if cache_miss_count > 0:
+                logger.info(f"   • Avg cache miss time: {avg_cache_miss_time*1000:.1f}ms")
+            if cache_hit_count > 0 and cache_miss_count > 0:
+                speedup = avg_cache_miss_time / avg_cache_hit_time
+                logger.info(f"   • Cache speedup: {speedup:.1f}x faster! ⚡️⚡️⚡️")
+            logger.info(f"")
+
+            # Time saved by cache
+            if cache_hit_count > 0 and cache_miss_count > 0:
+                time_without_cache = total_cached * avg_cache_miss_time
+                time_with_cache = cache_hit_time + cache_miss_time
+                time_saved = time_without_cache - time_with_cache
+                logger.info(f"💰 Time Saved by Cache:")
+                logger.info(f"   • Would have taken: {time_without_cache:.2f}s (all cache misses)")
+                logger.info(f"   • Actually took: {time_with_cache:.2f}s (with {cache_hit_rate:.1f}% cache hits)")
+                logger.info(f"   • Time saved: {time_saved:.2f}s ({time_saved/time_without_cache*100:.1f}% faster)")
+                logger.info(f"")
+
+        # Generation statistics (for cache misses)
+        if hasattr(CC_PhotoThumbnail, '_thumbnail_count') and CC_PhotoThumbnail._thumbnail_count > 0:
+            total_time = CC_PhotoThumbnail._total_thumbnail_time
+            total_size = CC_PhotoThumbnail._total_thumbnail_size
+            count = CC_PhotoThumbnail._thumbnail_count
+
+            avg_time = total_time / count
+            avg_size = total_size / count
+
+            logger.info(f"📊 ========== Thumbnail Generation Statistics ==========")
+            logger.info(f"📊 New thumbnails generated: {count}")
+            logger.info(f"📊 Total generation time: {total_time:.2f}s")
+            logger.info(f"📊 Average time per thumbnail: {avg_time*1000:.1f}ms")
+            logger.info(f"📊 Total size (JPEG quality=85): {total_size / 1024:.1f} KB ({total_size / 1024 / 1024:.2f} MB)")
+            logger.info(f"📊 Average size per thumbnail: {avg_size / 1024:.1f} KB")
+            logger.info(f"")
+            logger.info(f"💾 Database Storage:")
+            logger.info(f"   • For {count} new photos: {total_size / 1024 / 1024:.2f} MB added to cache")
+            logger.info(f"   • Cache will save ~{avg_time*1000:.1f}ms per photo on next load")
+
+            # Show some samples
+            if hasattr(CC_PhotoThumbnail, '_thumbnail_samples') and CC_PhotoThumbnail._thumbnail_samples:
+                logger.info(f"")
+                logger.info(f"📸 Sample new thumbnails:")
+                for i, sample in enumerate(CC_PhotoThumbnail._thumbnail_samples[:5], 1):
+                    logger.info(f"   {i}. {sample['name']}: {sample['time']*1000:.1f}ms, {sample['size']/1024:.1f} KB")
+
+            logger.info(f"")
+
+        # Database cache statistics
+        cache_stats = self.db.get_thumbnail_cache_stats()
+        if cache_stats['count'] > 0:
+            logger.info(f"💾 ========== Database Cache Status ==========")
+            logger.info(f"💾 Total cached thumbnails: {cache_stats['count']}")
+            logger.info(f"💾 Total cache size: {cache_stats['total_size'] / 1024 / 1024:.2f} MB")
+            logger.info(f"💾 Average thumbnail size: {cache_stats['avg_size'] / 1024:.1f} KB")
+            logger.info(f"")
+
+        logger.info(f"📊 ====================================================================")
+        logger.info(f"")
+
+    def _show_loading_controls(self, total_count: int):
+        """Show loading progress and cancel button"""
+        if not hasattr(self, '_loading_label'):
+            # Create loading label and cancel button at the top
+            self._loading_widget = QWidget()
+            loading_layout = QHBoxLayout(self._loading_widget)
+
+            self._loading_label = QLabel(f"Loading... 0/{total_count} photos")
+            self._loading_label.setStyleSheet("font-weight: bold; color: #0066cc;")
+            loading_layout.addWidget(self._loading_label)
+
+            self._cancel_loading_btn = QPushButton("✕ Cancel")
+            self._cancel_loading_btn.clicked.connect(self._cancel_loading)
+            self._cancel_loading_btn.setMaximumWidth(80)
+            loading_layout.addWidget(self._cancel_loading_btn)
+
+            # Insert at position 1 (after header, before scroll area)
+            self.photo_panel_layout.insertWidget(1, self._loading_widget)
+        else:
+            # Widget already exists, just make it visible and update text
+            self._loading_label.setText(f"Loading... 0/{total_count} photos")
+            self._loading_widget.setVisible(True)
+
+    def _hide_loading_controls(self):
+        """Hide loading controls"""
+        if hasattr(self, '_loading_widget'):
+            self._loading_widget.setVisible(False)
+
+    def _cancel_loading(self):
+        """Cancel photo loading - now handled by virtual grid"""
+        # Tell virtual grid to cancel background loading
+        self.photo_grid_widget.cancel_loading()
+
+        loaded = self.photo_grid.count()
+        logger.info(f"⚠️ Loading cancelled by user ({loaded} photos loaded)")
+        self._hide_loading_controls()
 
     def _add_photos(self):
         """Add photos to current album"""
@@ -1358,6 +1859,12 @@ class CC_MainWindow(QMainWindow):
 
     def _restore_folder_monitoring(self):
         """恢复所有 Folder Album 的监控（应用启动时调用）"""
+        # ⚠️ Check if folder watching is enabled
+        if not self.ENABLE_FOLDER_WATCHER:
+            logger.info("⚠️ FolderWatcher is DISABLED - skipping monitoring restoration")
+            logger.info("ℹ️  To enable: Set self.ENABLE_FOLDER_WATCHER = True in CC_Main.py")
+            return
+
         try:
             albums = self.db.get_all_albums()
             restored_count = 0
@@ -1422,7 +1929,11 @@ class CC_MainWindow(QMainWindow):
             self.db.conn.commit()
 
             # 开始监控和分析
-            self._start_folder_monitoring(album_id, folder_path)
+            if self.ENABLE_FOLDER_WATCHER:
+                self._start_folder_monitoring(album_id, folder_path)
+            else:
+                logger.info("⚠️ FolderWatcher is DISABLED - folder monitoring not started")
+                logger.info("ℹ️  Photos will be loaded from database only")
 
             # 刷新 UI
             self._load_navigator()
@@ -1435,6 +1946,11 @@ class CC_MainWindow(QMainWindow):
 
     def _start_folder_monitoring(self, album_id: int, folder_path: Path):
         """开始监控文件夹"""
+        # ⚠️ Check if folder watching is enabled
+        if not self.ENABLE_FOLDER_WATCHER:
+            logger.info(f"⚠️ FolderWatcher is DISABLED - skipping monitoring for album {album_id}")
+            return
+
         try:
             from CC_FolderWatcher import CC_FolderWatcher
 
