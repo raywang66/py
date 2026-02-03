@@ -29,6 +29,11 @@ class CC_Database:
         self.conn.row_factory = sqlite3.Row  # Return rows as dictionaries
 
         self._create_tables()
+
+        # Clean up orphaned thumbnail cache on startup
+        # Ensures cache integrity - thumbnails must have corresponding photos!
+        self.cleanup_orphaned_thumbnails()
+
         logger.info(f"Database initialized: {db_path}")
 
     def _create_tables(self):
@@ -384,6 +389,15 @@ class CC_Database:
         """, (project_id,))
         return [dict(row) for row in cursor.fetchall()]
 
+    def get_all_photos(self) -> List[Dict]:
+        """Get all photos from database - ONLY shows photos that have been explicitly added"""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT * FROM photos
+            ORDER BY added_at DESC
+        """)
+        return [dict(row) for row in cursor.fetchall()]
+
     # ========== Analysis Operations ==========
 
     def save_analysis(self, photo_id: int, results: Dict, point_cloud: bytes = None):
@@ -639,6 +653,21 @@ class CC_Database:
         deleted = cursor.rowcount
         self.conn.commit()
         logger.info(f"Cleaned up {deleted} old thumbnail cache entries")
+        return deleted
+
+    def cleanup_orphaned_thumbnails(self):
+        """
+        Clean up orphaned thumbnail cache entries that have no corresponding photos record.
+        Thumbnail cache is PASSIVE - it must be linked to photos table!
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            DELETE FROM thumbnail_cache 
+            WHERE photo_path NOT IN (SELECT file_path FROM photos)
+        """)
+        deleted = cursor.rowcount
+        self.conn.commit()
+        logger.info(f"Cleaned up {deleted} orphaned thumbnail cache entries")
         return deleted
 
     def update_photo_mtime(self, photo_path: str, mtime: float):

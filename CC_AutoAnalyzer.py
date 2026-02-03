@@ -28,8 +28,10 @@ class CC_AutoAnalyzer(QThread):
 
     def __init__(self, processor, db_path):
         super().__init__()
-        self.processor = processor  # CC_SkinProcessor instance
+        # ⚠️ DO NOT use the passed processor - MediaPipe is NOT thread-safe!
+        # We will create our own processor instance in run() thread
         self.db_path = db_path      # Path to database file
+        self.processor = None       # Will be created in run() thread (thread-safe)
         self.db = None              # Will be created in run() thread
         self.queue = Queue()
         self.running = True
@@ -55,6 +57,13 @@ class CC_AutoAnalyzer(QThread):
         from CC_Database import CC_Database
         self.db = CC_Database(self.db_path)
         logger.info("[AutoAnalyzer] Created thread-local database connection")
+
+        # 🔧 FIX: Create thread-local processor instance
+        # MediaPipe FaceMesh is NOT thread-safe!
+        # Each thread must have its own processor instance
+        from CC_SkinProcessor import CC_SkinProcessor
+        self.processor = CC_SkinProcessor()
+        logger.info("[AutoAnalyzer] ✅ Created thread-local CC_SkinProcessor (MediaPipe face detection enabled)")
 
         try:
             while self.running:
@@ -84,9 +93,16 @@ class CC_AutoAnalyzer(QThread):
 
                     # 分析照片
                     try:
-                        logger.info(f"[AutoAnalyzer] Analyzing: {photo_path.name}")
+                        logger.info(f"[AutoAnalyzer] 🔍 Analyzing: {photo_path.name}")
                         image_rgb = self.processor._load_image(photo_path)
+                        logger.info(f"[AutoAnalyzer]   Image loaded: {image_rgb.shape}")
+
                         point_cloud, mask = self.processor.process_image(image_rgb, return_mask=True)
+
+                        # 🔧 Detailed logging for verification
+                        mask_coverage = mask.sum() / mask.size * 100
+                        logger.info(f"[AutoAnalyzer]   Face mask coverage: {mask_coverage:.2f}%")
+                        logger.info(f"[AutoAnalyzer]   Skin pixels extracted: {len(point_cloud)}")
 
                         if len(point_cloud) > 0:
                             # 计算统计数据
@@ -97,7 +113,8 @@ class CC_AutoAnalyzer(QThread):
                             results['point_cloud_data'] = point_cloud_bytes
                             self.db.save_analysis(photo_id, results)
 
-                            logger.info(f"[AutoAnalyzer] Analysis complete: {photo_path.name}")
+                            logger.info(f"[AutoAnalyzer] ✅ Analysis complete: {photo_path.name}")
+                            logger.info(f"[AutoAnalyzer]   Hue mean: {results['hue_mean']:.2f}, Saturation: {results['saturation_mean']:.2f}")
                             self.analysis_complete.emit(photo_id, results)
                         else:
                             logger.warning(f"[AutoAnalyzer] No face detected: {photo_path.name}")
@@ -133,28 +150,30 @@ class CC_AutoAnalyzer(QThread):
         s_mean = point_cloud[:, 1].mean()
         l_mean = point_cloud[:, 2].mean()
 
-        # Lightness 分布 (3 ranges)
+        # Lightness 分布 (3 ranges) - multiply by 100 for percentage
         lightness = point_cloud[:, 2]
-        low_light = (lightness < 0.33).sum() / len(lightness)
-        mid_light = ((lightness >= 0.33) & (lightness < 0.67)).sum() / len(lightness)
-        high_light = (lightness >= 0.67).sum() / len(lightness)
+        low_light = (lightness < 0.33).sum() / len(lightness) * 100
+        mid_light = ((lightness >= 0.33) & (lightness < 0.67)).sum() / len(lightness) * 100
+        high_light = (lightness >= 0.67).sum() / len(lightness) * 100
 
-        # Hue 分布 (6 ranges)
-        hue = point_cloud[:, 0] * 360  # 转换为度数
-        hue_very_red = ((hue >= 0) & (hue < 10)).sum() / len(hue)
-        hue_red_orange = ((hue >= 10) & (hue < 25)).sum() / len(hue)
-        hue_normal = ((hue >= 25) & (hue < 35)).sum() / len(hue)
-        hue_yellow = ((hue >= 35) & (hue < 45)).sum() / len(hue)
-        hue_very_yellow = ((hue >= 45) & (hue < 60)).sum() / len(hue)
-        hue_abnormal = (hue >= 60).sum() / len(hue)
+        # Hue 分布 (6 ranges) - multiply by 100 for percentage
+        # ⚠️ IMPORTANT: point_cloud[:, 0] is already in degrees [0, 360]!
+        # DO NOT multiply by 360 (that was the bug causing wrong Hue results)
+        hue = point_cloud[:, 0]  # Already in degrees [0, 360]
+        hue_very_red = (((hue >= 0) & (hue < 10)) | (hue >= 350)).sum() / len(hue) * 100
+        hue_red_orange = ((hue >= 10) & (hue < 20)).sum() / len(hue) * 100
+        hue_normal = ((hue >= 20) & (hue < 30)).sum() / len(hue) * 100
+        hue_yellow = ((hue >= 30) & (hue < 40)).sum() / len(hue) * 100
+        hue_very_yellow = ((hue >= 40) & (hue < 60)).sum() / len(hue) * 100
+        hue_abnormal = ((hue >= 60) & (hue < 350)).sum() / len(hue) * 100
 
-        # Saturation 分布 (5 ranges)
+        # Saturation 分布 (5 ranges) - multiply by 100 for percentage
         saturation = point_cloud[:, 1] * 100  # 转换为百分比
-        sat_very_low = (saturation < 15).sum() / len(saturation)
-        sat_low = ((saturation >= 15) & (saturation < 30)).sum() / len(saturation)
-        sat_normal = ((saturation >= 30) & (saturation < 50)).sum() / len(saturation)
-        sat_high = ((saturation >= 50) & (saturation < 70)).sum() / len(saturation)
-        sat_very_high = (saturation >= 70).sum() / len(saturation)
+        sat_very_low = (saturation < 15).sum() / len(saturation) * 100
+        sat_low = ((saturation >= 15) & (saturation < 30)).sum() / len(saturation) * 100
+        sat_normal = ((saturation >= 30) & (saturation < 50)).sum() / len(saturation) * 100
+        sat_high = ((saturation >= 50) & (saturation < 70)).sum() / len(saturation) * 100
+        sat_very_high = (saturation >= 70).sum() / len(saturation) * 100
 
         results = {
             'face_detected': True,

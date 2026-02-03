@@ -33,6 +33,12 @@ import numpy as np
 from PIL import Image
 import cv2
 
+# Matplotlib for distribution charts
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend
+import matplotlib.pyplot as plt
+from io import BytesIO
+
 from cc_config import CC_PROJECT_NAME, CC_VERSION
 from CC_SkinProcessor import CC_SkinProcessor, MEDIAPIPE_AVAILABLE, RAWPY_AVAILABLE
 from CC_Database import CC_Database
@@ -480,7 +486,7 @@ class CC_MainWindow(QMainWindow):
 
         # ⚠️ TEMPORARY: Disable FolderWatcher to focus on UI rendering performance
         # TODO: Re-enable after UI performance is optimized
-        self.ENABLE_FOLDER_WATCHER = False  # 🔧 Set to True to enable file monitoring
+        self.ENABLE_FOLDER_WATCHER = True  # 🔧 Set to True to enable file monitoring
 
         # Folder monitoring and auto-analysis
         self.folder_watchers = {}  # album_id -> CC_FolderWatcher
@@ -817,10 +823,33 @@ class CC_MainWindow(QMainWindow):
         # Statistics
         stats_group = QGroupBox("Statistics")
         stats_layout = QVBoxLayout(stats_group)
+
+        # Basic stats text (Hue, Sat, Light means)
         self.stats_text = QLabel("No data")
         self.stats_text.setWordWrap(True)
         self.stats_text.setStyleSheet("color: #333; font-size: 11px; font-family: monospace; padding: 10px;")
         stats_layout.addWidget(self.stats_text)
+
+        # Distribution bar charts - horizontal layout (left to right: Hue, Saturation, Lightness)
+        # Use minimal spacing like tooltip
+        charts_layout = QHBoxLayout()
+        charts_layout.setSpacing(2)  # Minimal spacing between charts
+        charts_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.hue_chart_label = QLabel()
+        self.hue_chart_label.setAlignment(Qt.AlignCenter)
+        charts_layout.addWidget(self.hue_chart_label)
+
+        self.saturation_chart_label = QLabel()
+        self.saturation_chart_label.setAlignment(Qt.AlignCenter)
+        charts_layout.addWidget(self.saturation_chart_label)
+
+        self.lightness_chart_label = QLabel()
+        self.lightness_chart_label.setAlignment(Qt.AlignCenter)
+        charts_layout.addWidget(self.lightness_chart_label)
+
+        stats_layout.addLayout(charts_layout)
+
         layout.addWidget(stats_group)
 
         # Buttons
@@ -1315,23 +1344,17 @@ class CC_MainWindow(QMainWindow):
         self.photo_header.setText(f"📁 {folder.name} ({len(filtered_photos)} photos)")
 
     def _load_all_photos(self):
-        """Load all photos from Photos folder"""
+        """Load all photos from database - NOT from file system!"""
         self.current_album_id = None
-        photos_dir = Path(__file__).parent / "Photos"
-        if not photos_dir.exists():
-            return
 
-        extensions = ['*.jpg', '*.jpeg', '*.png', '*.JPG', '*.JPEG', '*.PNG']
-        if RAWPY_AVAILABLE:
-            extensions.extend(['*.arw', '*.nef', '*.cr2', '*.cr3', '*.dng'])
+        # ✅ CORRECT: Load from database, NOT file system
+        # Only shows photos that have been explicitly added to the database
+        photos = self.db.get_all_photos()
+        photo_paths = [Path(p['file_path']) for p in photos]
 
-        photos = []
-        for ext in extensions:
-            photos.extend(photos_dir.glob(ext))
-        photos.sort()
+        self._display_photos(photo_paths)
+        self.photo_header.setText(f"📷 All Photos ({len(photo_paths)})")
 
-        self._display_photos(photos)
-        self.photo_header.setText(f"📷 All Photos ({len(photos)})")
 
     def _display_photos(self, photo_paths: List[Path]):
         """
@@ -1348,6 +1371,17 @@ class CC_MainWindow(QMainWindow):
         if total_count == 0:
             self.photo_grid_widget.clear()
             return
+
+        # ⚡️ IMPORTANT: Reset thumbnail statistics for this loading session
+        # Prevents accumulation across multiple folder views
+        CC_PhotoThumbnail._cache_hit_count = 0
+        CC_PhotoThumbnail._cache_miss_count = 0
+        CC_PhotoThumbnail._cache_hit_time = 0
+        CC_PhotoThumbnail._cache_miss_time = 0
+        CC_PhotoThumbnail._total_thumbnail_time = 0
+        CC_PhotoThumbnail._total_thumbnail_size = 0
+        CC_PhotoThumbnail._thumbnail_count = 0
+        CC_PhotoThumbnail._thumbnail_samples = []
 
         # Show loading info
         if total_count > 30:
@@ -1573,8 +1607,72 @@ class CC_MainWindow(QMainWindow):
             self.results_text.setText("❌ Error loading analysis")
             self.stats_text.setText(str(e))
 
+    def _create_distribution_chart(self, values: list, colors: list, title: str, width: float = 0.8, height: float = 2.2) -> QPixmap:
+        """Create a vertical stacked bar chart as QPixmap (compact style like tooltip)"""
+        fig, ax = plt.subplots(figsize=(width, height))
+        fig.patch.set_facecolor('white')
+
+        # Create vertical stacked bar (narrower, like tooltip)
+        x = [0]
+        bottom = 0
+        for val, color in zip(values, colors):
+            ax.bar(x, val, bottom=bottom, color=color, width=0.5, edgecolor='white', linewidth=0.5)
+            bottom += val
+
+        ax.set_ylim(0, 100)
+        ax.set_xlim(-0.5, 0.5)
+
+        # Title at bottom (like tooltip: "Hue", "Sat", "Light")
+        ax.set_xlabel(title, fontsize=7, weight='bold')
+
+        ax.set_yticks([])  # No tick labels - everyone knows it's 0-100%
+        ax.set_xticks([])
+
+        # Clean up spines - minimal style like tooltip
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['bottom'].set_visible(False)
+        ax.spines['left'].set_visible(False)
+        ax.tick_params(left=False, bottom=False)
+
+        fig.tight_layout(pad=0.1)
+
+        # Convert to QPixmap
+        buffer = BytesIO()
+        fig.savefig(buffer, format='png', dpi=100, bbox_inches='tight', facecolor='white')
+        buffer.seek(0)
+
+        pixmap = QPixmap()
+        pixmap.loadFromData(buffer.read())
+
+        plt.close(fig)
+
+        return pixmap
+
+    def _create_lightness_chart(self, low: float, mid: float, high: float) -> QPixmap:
+        """Create lightness distribution bar chart"""
+        values = [low, mid, high]
+        colors = ['#8B4513', '#CD853F', '#F4A460']  # Brown shades
+        return self._create_distribution_chart(values, colors, 'Light')
+
+    def _create_hue_chart(self, very_red: float, red_orange: float, normal: float,
+                          yellow: float, very_yellow: float, abnormal: float) -> QPixmap:
+        """Create hue distribution bar chart"""
+        values = [very_red, red_orange, normal, yellow, very_yellow, abnormal]
+        colors = ['#8B0000', '#CD5C5C', '#D2B48C', '#DAA520', '#FFD700', '#696969']
+        return self._create_distribution_chart(values, colors, 'Hue')
+
+    def _create_saturation_chart(self, very_low: float, low: float, normal: float,
+                                  high: float, very_high: float) -> QPixmap:
+        """Create saturation distribution bar chart"""
+        values = [very_low, low, normal, high, very_high]
+        colors = ['#D3D3D3', '#B0C4DE', '#87CEEB', '#4682B4', '#191970']  # Gray to blue
+        return self._create_distribution_chart(values, colors, 'Sat')
+        colors = ['#D3D3D3', '#B0C4DE', '#87CEEB', '#4682B4', '#191970']  # Gray to blue
+        return self._create_distribution_chart(values, colors, '💧 Saturation Distribution')
+
     def _display_analysis_results(self, analysis: dict):
-        """显示分析结果（包括三个分布图的文本版本）"""
+        """显示分析结果（包括三个分布图的柱形图版本）"""
         num_points = analysis.get('num_points', 0)
         mask_coverage = analysis.get('mask_coverage', 0)
         h_mean = analysis.get('hue_mean', 0)
@@ -1582,52 +1680,48 @@ class CC_MainWindow(QMainWindow):
         s_mean = analysis.get('saturation_mean', 0)
         l_mean = analysis.get('lightness_mean', 0)
 
-        # Lightness 分布
-        low_light = analysis.get('lightness_low', 0) * 100
-        mid_light = analysis.get('lightness_mid', 0) * 100
-        high_light = analysis.get('lightness_high', 0) * 100
+        # Lightness 分布 - already in percentage from database
+        low_light = analysis.get('lightness_low', 0)
+        mid_light = analysis.get('lightness_mid', 0)
+        high_light = analysis.get('lightness_high', 0)
 
-        # Hue 分布
-        hue_very_red = analysis.get('hue_very_red', 0) * 100
-        hue_red_orange = analysis.get('hue_red_orange', 0) * 100
-        hue_normal = analysis.get('hue_normal', 0) * 100
-        hue_yellow = analysis.get('hue_yellow', 0) * 100
-        hue_very_yellow = analysis.get('hue_very_yellow', 0) * 100
-        hue_abnormal = analysis.get('hue_abnormal', 0) * 100
+        # Hue 分布 - already in percentage from database
+        hue_very_red = analysis.get('hue_very_red', 0)
+        hue_red_orange = analysis.get('hue_red_orange', 0)
+        hue_normal = analysis.get('hue_normal', 0)
+        hue_yellow = analysis.get('hue_yellow', 0)
+        hue_very_yellow = analysis.get('hue_very_yellow', 0)
+        hue_abnormal = analysis.get('hue_abnormal', 0)
 
-        # Saturation 分布
-        sat_very_low = analysis.get('sat_very_low', 0) * 100
-        sat_low = analysis.get('sat_low', 0) * 100
-        sat_normal = analysis.get('sat_normal', 0) * 100
-        sat_high = analysis.get('sat_high', 0) * 100
-        sat_very_high = analysis.get('sat_very_high', 0) * 100
+        # Saturation 分布 - already in percentage from database
+        sat_very_low = analysis.get('sat_very_low', 0)
+        sat_low = analysis.get('sat_low', 0)
+        sat_normal = analysis.get('sat_normal', 0)
+        sat_high = analysis.get('sat_high', 0)
+        sat_very_high = analysis.get('sat_very_high', 0)
 
         self.results_text.setText(
             f"✓ Face detected! (from database)\n{num_points:,} points\nCoverage: {mask_coverage * 100:.1f}%"
         )
 
+        # Display basic statistics as text
         self.stats_text.setText(
-            f"Hue: {h_mean * 360:.1f}° ± {h_std * 360:.1f}°\n"
+            f"Hue: {h_mean:.1f}° ± {h_std:.1f}°\n"
             f"Sat: {s_mean * 100:.1f}%\n"
-            f"Light: {l_mean * 100:.1f}%\n\n"
-            f"📊 Lightness Distribution:\n"
-            f"  Low  (<33%): {low_light:.1f}%\n"
-            f"  Mid (33-67%): {mid_light:.1f}%\n"
-            f"  High (>67%): {high_light:.1f}%\n\n"
-            f"🎨 Hue Distribution:\n"
-            f"  Very Red (0-10°): {hue_very_red:.1f}%\n"
-            f"  Red-Orange (10-25°): {hue_red_orange:.1f}%\n"
-            f"  Normal (25-35°): {hue_normal:.1f}%\n"
-            f"  Yellow (35-45°): {hue_yellow:.1f}%\n"
-            f"  Very Yellow (45-60°): {hue_very_yellow:.1f}%\n"
-            f"  Abnormal (>60°): {hue_abnormal:.1f}%\n\n"
-            f"💧 Saturation Distribution:\n"
-            f"  Very Low (<15%): {sat_very_low:.1f}%\n"
-            f"  Low (15-30%): {sat_low:.1f}%\n"
-            f"  Normal (30-50%): {sat_normal:.1f}%\n"
-            f"  High (50-70%): {sat_high:.1f}%\n"
-            f"  Very High (>70%): {sat_very_high:.1f}%"
+            f"Light: {l_mean * 100:.1f}%"
         )
+
+        # Create and display distribution bar charts
+        lightness_pixmap = self._create_lightness_chart(low_light, mid_light, high_light)
+        self.lightness_chart_label.setPixmap(lightness_pixmap)
+
+        hue_pixmap = self._create_hue_chart(hue_very_red, hue_red_orange, hue_normal,
+                                              hue_yellow, hue_very_yellow, hue_abnormal)
+        self.hue_chart_label.setPixmap(hue_pixmap)
+
+        saturation_pixmap = self._create_saturation_chart(sat_very_low, sat_low, sat_normal,
+                                                            sat_high, sat_very_high)
+        self.saturation_chart_label.setPixmap(saturation_pixmap)
 
     def _analyze_photo(self):
         """Analyze selected photo"""
@@ -1693,28 +1787,24 @@ class CC_MainWindow(QMainWindow):
             f"✓ Face detected!\n{len(point_cloud):,} points\nCoverage: {mask.sum() / mask.size * 100:.1f}%"
         )
 
+        # Display basic statistics as text
         self.stats_text.setText(
             f"Hue: {h_mean:.1f}° ± {h_std:.1f}°\n"
             f"Sat: {s_mean * 100:.1f}%\n"
-            f"Light: {l_mean * 100:.1f}%\n\n"
-            f"📊 Lightness Distribution:\n"
-            f"  Low  (<33%): {low_light:.1f}%\n"
-            f"  Mid (33-67%): {mid_light:.1f}%\n"
-            f"  High (>67%): {high_light:.1f}%\n\n"
-            f"🎨 Hue Distribution:\n"
-            f"  Very Red: {hue_very_red:.1f}%\n"
-            f"  Red-Orange: {hue_red_orange:.1f}%\n"
-            f"  Normal: {hue_normal:.1f}%\n"
-            f"  Yellow: {hue_yellow:.1f}%\n"
-            f"  Very Yellow: {hue_very_yellow:.1f}%\n"
-            f"  Abnormal: {hue_abnormal:.1f}%\n\n"
-            f"💧 Saturation Distribution:\n"
-            f"  Very Low: {sat_very_low:.1f}%\n"
-            f"  Low: {sat_low:.1f}%\n"
-            f"  Normal: {sat_normal:.1f}%\n"
-            f"  High: {sat_high:.1f}%\n"
-            f"  Very High: {sat_very_high:.1f}%"
+            f"Light: {l_mean * 100:.1f}%"
         )
+
+        # Create and display distribution bar charts
+        lightness_pixmap = self._create_lightness_chart(low_light, mid_light, high_light)
+        self.lightness_chart_label.setPixmap(lightness_pixmap)
+
+        hue_pixmap = self._create_hue_chart(hue_very_red, hue_red_orange, hue_normal,
+                                              hue_yellow, hue_very_yellow, hue_abnormal)
+        self.hue_chart_label.setPixmap(hue_pixmap)
+
+        saturation_pixmap = self._create_saturation_chart(sat_very_low, sat_low, sat_normal,
+                                                            sat_high, sat_very_high)
+        self.saturation_chart_label.setPixmap(saturation_pixmap)
 
         # Save to database
         try:
