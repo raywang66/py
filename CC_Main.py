@@ -1581,19 +1581,15 @@ class CC_MainWindow(QMainWindow):
                 # 自动显示分析结果
                 self._display_analysis_results(analysis)
 
-                # 加载 point cloud 用于 3D 可视化
+                # 延迟加载：只加载 point cloud，image 和 mask 在点击 Visualize 时才加载
                 point_cloud_data = analysis.get('point_cloud_data')
                 if point_cloud_data:
                     self.point_cloud = pickle.loads(point_cloud_data)
-                    try:
-                        image_rgb = self.processor._load_image(photo_path)
-                        self.current_photo_rgb = image_rgb
-                        _, mask = self.processor.process_image(image_rgb, return_mask=True)
-                        self.current_mask = mask
-                        self.visualize_btn.setEnabled(True)
-                    except Exception as e:
-                        logger.warning(f"Could not load image for visualization: {e}")
-                        self.visualize_btn.setEnabled(False)
+                    # Clear cached image/mask (will be loaded on demand)
+                    self.current_photo_rgb = None
+                    self.current_mask = None
+                    self.visualize_btn.setEnabled(True)
+                    logger.debug(f"Point cloud loaded (deferred image/mask loading)")
                 else:
                     self.visualize_btn.setEnabled(False)
             else:
@@ -1668,8 +1664,6 @@ class CC_MainWindow(QMainWindow):
         values = [very_low, low, normal, high, very_high]
         colors = ['#D3D3D3', '#B0C4DE', '#87CEEB', '#4682B4', '#191970']  # Gray to blue
         return self._create_distribution_chart(values, colors, 'Sat')
-        colors = ['#D3D3D3', '#B0C4DE', '#87CEEB', '#4682B4', '#191970']  # Gray to blue
-        return self._create_distribution_chart(values, colors, '💧 Saturation Distribution')
 
     def _display_analysis_results(self, analysis: dict):
         """显示分析结果（包括三个分布图的柱形图版本）"""
@@ -1930,20 +1924,53 @@ class CC_MainWindow(QMainWindow):
         self.stats_window = stats_window
 
     def _show_visualization(self):
-        """Show 3D visualization"""
-        if self.current_photo_rgb is None or self.current_mask is None:
+        """Show 3D visualization - with lazy loading of image and mask"""
+        if not self.current_photo or self.point_cloud is None:
             QMessageBox.warning(self, "No Data", "No analysis data to visualize")
             return
 
-        from CC_MainApp import CC_Visualization3DWindow
+        # Lazy loading: load image and mask only when needed
+        if self.current_photo_rgb is None or self.current_mask is None:
+            try:
+                logger.info(f"Lazy loading image and mask for visualization: {self.current_photo.name}")
+                start_time = time.time()
+
+                # Load image
+                image_rgb = self.processor._load_image(self.current_photo)
+                self.current_photo_rgb = image_rgb
+
+                # Process to get mask
+                _, mask = self.processor.process_image(image_rgb, return_mask=True)
+                self.current_mask = mask
+
+                elapsed = time.time() - start_time
+                logger.info(f"Lazy loading completed in {elapsed*1000:.0f}ms")
+
+            except Exception as e:
+                logger.error(f"Failed to load image/mask for visualization: {e}")
+                QMessageBox.critical(self, "Error", f"Failed to load visualization data:\n{e}")
+                return
+
+        # Create visualization window
         viz_window = CC_Visualization3DWindow(
-            self.current_photo_rgb, self.current_mask, self.point_cloud,
-            self.renderer_3d, self.current_photo.name
+            self.current_photo_rgb,
+            self.current_mask,
+            self.point_cloud,
+            self.renderer_3d,
+            self.current_photo.name
         )
+
+        # Apply theme to visualization window
         viz_window.setPalette(self.palette())
         viz_window.setStyleSheet(self.styleSheet())
+
+        # Show the window
         viz_window.show()
+
+        # Keep reference so it doesn't get garbage collected
         self.viz_window = viz_window
+
+        logger.info("Visualization window displayed")
 
     # ========== Folder Album 功能 ==========
 
@@ -2177,6 +2204,322 @@ class CC_MainWindow(QMainWindow):
         self.db.close()
         event.accept()
 
+
+    # ========== End of CC_MainWindow ==========
+
+
+# =============================================================================
+# Visualization Window
+# =============================================================================
+
+class CC_Visualization3DWindow(QWidget):
+    """Interactive 3D visualization window with mouse controls"""
+
+    def __init__(self, rgb_image, mask, point_cloud, renderer, photo_name):
+        super().__init__()
+        self.rgb_image = rgb_image
+        self.mask = mask
+        self.point_cloud = point_cloud
+        self.renderer = renderer
+        self.photo_name = photo_name
+
+        # Mouse tracking
+        self.last_mouse_pos = None
+        self.is_dragging = False
+
+        self.setWindowTitle(f"3D Visualization - {photo_name}")
+        self.setGeometry(150, 150, 1400, 800)
+
+        self._create_ui()
+
+    def _create_ui(self):
+        """Create the visualization UI"""
+        layout = QVBoxLayout(self)
+
+        # Title
+        title = QLabel("🎨 肤色3D圆柱楔形可视化 (拖动鼠标旋转，滚轮缩放)")
+        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #4ECDC4; padding: 10px;")
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+
+        # Two-column layout
+        content_layout = QHBoxLayout()
+
+        # LEFT: Face mask overlay
+        left_panel = QGroupBox("检测到的面部遮罩")
+        left_layout = QVBoxLayout(left_panel)
+
+        self.face_label = QLabel()
+        self.face_label.setAlignment(Qt.AlignCenter)
+        self.face_label.setStyleSheet("background-color: #2a2a2a; border: 1px solid #444;")
+
+        # Create face mask visualization
+        import cv2
+        overlay = self.rgb_image.copy()
+
+        # Create colored mask overlay (semi-transparent teal)
+        mask_colored = np.zeros_like(overlay)
+        mask_colored[self.mask == 1] = [78, 205, 196]  # Teal color
+
+        # Blend with original image
+        alpha = 0.4
+        overlay = cv2.addWeighted(overlay, 1, mask_colored, alpha, 0)
+
+        # Resize to fit display
+        h, w = overlay.shape[:2]
+        max_size = 500
+        if h > max_size or w > max_size:
+            scale = max_size / max(h, w)
+            new_h, new_w = int(h * scale), int(w * scale)
+            overlay = cv2.resize(overlay, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+        # Convert to QPixmap
+        h, w, ch = overlay.shape
+        bytes_per_line = ch * w
+        qt_image = QImage(overlay.data, w, h, bytes_per_line, QImage.Format_RGB888)
+        pixmap = QPixmap.fromImage(qt_image)
+        self.face_label.setPixmap(pixmap)
+
+        left_layout.addWidget(self.face_label)
+
+        # Mask stats
+        mask_info = QLabel(f"遮罩覆盖 {self.mask.sum() / self.mask.size * 100:.2f}% 的图像\n"
+                           f"排除: 眼睛、眉毛、嘴唇、面部毛发")
+        mask_info.setStyleSheet("color: #999; font-size: 11px; padding: 5px;")
+        mask_info.setAlignment(Qt.AlignCenter)
+        left_layout.addWidget(mask_info)
+
+        content_layout.addWidget(left_panel)
+
+        # RIGHT: 3D HSL point cloud
+        right_panel = QGroupBox("3D HSL 圆柱楔形 (H: 15-25°)")
+        right_layout = QVBoxLayout(right_panel)
+
+        if self.renderer and len(self.point_cloud) > 0:
+            # Upload point cloud data to renderer
+            logger.info(f"Uploading {len(self.point_cloud)} points to 3D renderer")
+            self.renderer.set_point_cloud(self.point_cloud, color_mode='hsl')
+
+            # Create interactive 3D view
+            self.render_label = QLabel()
+            self.render_label.setAlignment(Qt.AlignCenter)
+            self.render_label.setStyleSheet("background-color: #2a2a2a; border: 1px solid #444;")
+            self.render_label.setMinimumSize(600, 600)
+
+            # Enable mouse tracking
+            self.render_label.setMouseTracking(True)
+            self.render_label.mousePressEvent = self._on_mouse_press
+            self.render_label.mouseMoveEvent = self._on_mouse_move
+            self.render_label.mouseReleaseEvent = self._on_mouse_release
+            self.render_label.wheelEvent = self._on_wheel
+
+            # Initial render
+            self._update_render()
+
+            right_layout.addWidget(self.render_label)
+
+            # Controls info
+            controls_info = QLabel(
+                f"{len(self.point_cloud):,} 个点已可视化\n"
+                f"🖱️ 左键拖动: 旋转 | 滚轮: 缩放\n"
+                f"颜色: HSL 映射到 RGB\n"
+                f"⬆️ Y轴: 亮度 (0-100%) | 📐 角度: 色调 | 📏 半径: 饱和度"
+            )
+            controls_info.setStyleSheet("color: #999; font-size: 11px; padding: 5px;")
+            controls_info.setAlignment(Qt.AlignCenter)
+            right_layout.addWidget(controls_info)
+
+            # View preset buttons
+            view_label = QLabel("快速视角:")
+            view_label.setStyleSheet("color: #4ECDC4; font-size: 12px; font-weight: bold; margin-top: 10px;")
+            view_label.setAlignment(Qt.AlignCenter)
+            right_layout.addWidget(view_label)
+
+            view_btns_layout = QHBoxLayout()
+
+            front_btn = QPushButton("正面")
+            front_btn.setFixedWidth(70)
+            front_btn.clicked.connect(lambda: self._set_camera_preset("front"))
+            view_btns_layout.addWidget(front_btn)
+
+            side_btn = QPushButton("侧面")
+            side_btn.setFixedWidth(70)
+            side_btn.clicked.connect(lambda: self._set_camera_preset("side"))
+            view_btns_layout.addWidget(side_btn)
+
+            top_btn = QPushButton("俯视")
+            top_btn.setFixedWidth(70)
+            top_btn.clicked.connect(lambda: self._set_camera_preset("top"))
+            view_btns_layout.addWidget(top_btn)
+
+            angle_btn = QPushButton("斜视")
+            angle_btn.setFixedWidth(70)
+            angle_btn.clicked.connect(lambda: self._set_camera_preset("angle"))
+            view_btns_layout.addWidget(angle_btn)
+
+            right_layout.addLayout(view_btns_layout)
+
+        else:
+            # Taichi not available or no data
+            if not self.renderer:
+                info_text = "3D 可视化需要 Taichi\n\n安装: pip install taichi"
+            else:
+                info_text = "没有点云数据"
+            info_label = QLabel(info_text)
+            info_label.setStyleSheet("color: #999; padding: 20px;")
+            info_label.setAlignment(Qt.AlignCenter)
+            right_layout.addWidget(info_label)
+
+        content_layout.addWidget(right_panel)
+
+        layout.addLayout(content_layout)
+
+        # Close button
+        close_btn = QPushButton("关闭")
+        close_btn.clicked.connect(self.close)
+        close_btn.setFixedWidth(100)
+
+        # Save screenshot button
+        save_btn = QPushButton("💾 保存截图")
+        save_btn.clicked.connect(self._save_screenshot)
+        save_btn.setFixedWidth(120)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        btn_layout.addWidget(save_btn)
+        btn_layout.addWidget(close_btn)
+        layout.addLayout(btn_layout)
+
+    def _save_screenshot(self):
+        """Save the current 3D render as a screenshot"""
+        if not self.renderer:
+            return
+
+        try:
+            # Generate filename with timestamp
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"3D_visualization_{timestamp}.png"
+
+            # Save to output directory
+            output_dir = Path(__file__).parent / "output"
+            output_dir.mkdir(exist_ok=True)
+            filepath = output_dir / filename
+
+            # Save the screenshot
+            self.renderer.save_screenshot(str(filepath))
+
+            # Also save the face mask image
+            import cv2
+            face_filename = f"face_mask_{timestamp}.png"
+            face_filepath = output_dir / face_filename
+
+            # Create face mask visualization
+            overlay = self.rgb_image.copy()
+            mask_colored = np.zeros_like(overlay)
+            mask_colored[self.mask == 1] = [78, 205, 196]
+            alpha = 0.4
+            overlay = cv2.addWeighted(overlay, 1, mask_colored, alpha, 0)
+            cv2.imwrite(str(face_filepath), cv2.cvtColor(overlay, cv2.COLOR_RGB2BGR))
+
+            QMessageBox.information(
+                self,
+                "截图已保存",
+                f"3D可视化截图已保存到:\n{filepath}\n\n面部遮罩已保存到:\n{face_filepath}"
+            )
+            logger.info(f"Screenshots saved: {filepath}, {face_filepath}")
+
+        except Exception as e:
+            logger.error(f"Screenshot save error: {e}", exc_info=True)
+            QMessageBox.critical(self, "保存失败", f"无法保存截图:\n\n{e}")
+
+    def _update_render(self):
+        """Update the 3D render"""
+        if not self.renderer:
+            return
+
+        try:
+            self.renderer.render()
+            render_img = self.renderer.get_image()
+
+            h, w, ch = render_img.shape
+            bytes_per_line = ch * w
+            qt_image = QImage(render_img.data, w, h, bytes_per_line, QImage.Format_RGB888)
+            pixmap = QPixmap.fromImage(qt_image)
+            self.render_label.setPixmap(pixmap)
+
+        except Exception as e:
+            logger.error(f"Render update error: {e}", exc_info=True)
+
+    def _on_mouse_press(self, event):
+        """Handle mouse press"""
+        if event.button() == Qt.LeftButton:
+            self.is_dragging = True
+            self.last_mouse_pos = event.pos()
+
+    def _on_mouse_move(self, event):
+        """Handle mouse move for rotation"""
+        if self.is_dragging and self.last_mouse_pos and self.renderer:
+            delta = event.pos() - self.last_mouse_pos
+
+            # Convert pixel movement to rotation angles
+            sensitivity = 0.5
+            delta_h = delta.x() * sensitivity
+            delta_v = -delta.y() * sensitivity  # Invert Y for natural rotation
+
+            # Rotate camera
+            self.renderer.rotate_camera(delta_h, delta_v)
+
+            # Update render
+            self._update_render()
+
+            self.last_mouse_pos = event.pos()
+
+    def _on_mouse_release(self, event):
+        """Handle mouse release"""
+        if event.button() == Qt.LeftButton:
+            self.is_dragging = False
+            self.last_mouse_pos = None
+
+    def _on_wheel(self, event):
+        """Handle mouse wheel for zoom"""
+        if self.renderer:
+            # Get wheel delta
+            delta = event.angleDelta().y()
+            zoom_speed = 0.01
+            zoom_delta = -delta * zoom_speed  # Negative for natural zoom direction
+
+            # Zoom camera
+            self.renderer.zoom_camera(zoom_delta)
+
+            # Update render
+            self._update_render()
+
+    def _set_camera_preset(self, preset: str):
+        """Set camera to predefined angles"""
+        if not self.renderer:
+            return
+
+        # Preset angles (horizontal, vertical)
+        # Adjusted to make Y-axis (Lightness) appear vertical on screen
+        presets = {
+            "front": (20, 10),  # Slightly angled front view (Y-axis vertical)
+            "side": (90, 10),  # Side view (Y-axis vertical)
+            "top": (45, 70),  # Top-down view (looking down at cylinder)
+            "angle": (45, 20)  # Angled 3D view (Y-axis mostly vertical)
+        }
+
+        if preset in presets:
+            h_angle, v_angle = presets[preset]
+            self.renderer.set_camera_angles(h_angle, v_angle)
+
+            # Update render
+            self._update_render()
+
+
+# =============================================================================
+# Main Entry Point
+# =============================================================================
 
 def main():
     """Main entry point"""
