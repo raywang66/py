@@ -44,7 +44,7 @@ if use_venv and not in_venv:
     print("STEP 0: Setting up virtual environment...")
     print("-" * 70)
 
-    venv_name = "venv_chromacloud"
+    venv_name = "cc_env"
     venv_path = Path(__file__).parent / venv_name
 
     if venv_path.exists():
