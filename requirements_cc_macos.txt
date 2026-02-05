@@ -1,0 +1,106 @@
+# ChromaCloud (CC) - Requirements for macOS
+
+# ============================================================================
+# INSTALLATION INSTRUCTIONS FOR macOS
+# ============================================================================
+# For GPU acceleration on Apple Silicon (M1/M2/M3/M4):
+#
+# 1. Check your macOS version and chip:
+#    system_profiler SPSoftwareDataType SPHardwareDataType
+#
+# 2. Install PyTorch with MPS (Metal Performance Shaders) support:
+#
+#    For Apple Silicon (M1/M2/M3/M4) with GPU acceleration:
+#    pip install torch torchvision
+#
+#    Note: PyTorch automatically detects and uses MPS backend for Apple Silicon.
+#    No special index URL needed - the default PyTorch build includes MPS support.
+#
+# 3. Then install remaining dependencies:
+#    pip install -r requirements_cc_macos.txt
+#
+# OR use the automated install script: python install_cc.py
+
+# ============================================================================
+# CORE FRAMEWORK
+# ============================================================================
+PySide6>=6.6.0              # Qt6 for modern desktop UI
+PySide6-Addons>=6.6.0       # Additional Qt modules
+
+# ============================================================================
+# AI & COMPUTER VISION
+# ============================================================================
+# torch>=2.0.0              # INSTALL SEPARATELY (see above for MPS support)
+# torchvision>=0.15.0       # INSTALL SEPARATELY (see above for MPS support)
+mediapipe>=0.10.0           # Google MediaPipe for face detection (replaces BiSeNet)
+opencv-python>=4.8.0        # Image processing
+Pillow>=10.0.0              # Image I/O
+
+# ============================================================================
+# GPU COMPUTING
+# ============================================================================
+taichi>=1.6.0               # High-performance GPU computing for 3D rendering
+                            # Note: Taichi supports Metal backend on macOS for Apple Silicon
+
+# ============================================================================
+# RAW FILE SUPPORT
+# ============================================================================
+rawpy>=0.18.0               # RAW file processing (ARW, CR2, NEF)
+                            # Note: May require additional system libraries via Homebrew:
+                            # brew install libraw
+
+# ============================================================================
+# FILE SYSTEM MONITORING
+# ============================================================================
+watchdog>=3.0.0             # File system event monitoring for folder auto-scan
+                            # Note: Uses native FSEvents on macOS for better performance
+imageio>=2.31.0             # Image I/O backend
+
+# ============================================================================
+# SCIENTIFIC COMPUTING
+# ============================================================================
+numpy>=1.24.0               # Numerical arrays
+scipy>=1.11.0               # Scientific algorithms
+
+# ============================================================================
+# DATABASE
+# ============================================================================
+# SQLite is included in Python standard library
+
+# ============================================================================
+# DEVELOPMENT TOOLS (Optional)
+# ============================================================================
+pytest>=7.4.0               # Unit testing
+black>=23.0.0               # Code formatting
+mypy>=1.5.0                 # Type checking
+
+# ============================================================================
+# macOS-SPECIFIC NOTES
+# ============================================================================
+#
+# 1. GPU ACCELERATION:
+#    - Apple Silicon (M1/M2/M3/M4): PyTorch uses MPS (Metal Performance Shaders)
+#    - Intel Mac: CPU only, no CUDA support
+#    - To verify MPS availability: python -c "import torch; print(torch.backends.mps.is_available())"
+#
+# 2. HOMEBREW DEPENDENCIES (if needed):
+#    brew install libraw          # For rawpy (RAW file support)
+#    brew install libjpeg         # For Pillow (JPEG support)
+#    brew install libtiff         # For Pillow (TIFF support)
+#
+# 3. PYTHON VERSION:
+#    - Recommended: Python 3.10 or 3.11 (best compatibility with PyTorch MPS)
+#    - Check: python3 --version
+#
+# 4. XCODE COMMAND LINE TOOLS:
+#    - Required for compiling some dependencies
+#    - Install: xcode-select --install
+#
+# 5. PERFORMANCE TIPS:
+#    - ChromaCloud's 3D rendering (Taichi) uses Metal backend on Apple Silicon
+#    - MediaPipe face detection runs efficiently on Apple Neural Engine
+#    - Large RAW files benefit from unified memory architecture on Apple Silicon
+#
+# 6. FILE SYSTEM CASE SENSITIVITY:
+#    - macOS default is case-insensitive but case-preserving
+#    - ChromaCloud database paths will preserve case from file system
