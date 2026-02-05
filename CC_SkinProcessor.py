@@ -417,8 +417,11 @@ class CC_SkinProcessor:
         if len(points) <= self.hsl_config.max_points:
             return points
 
+        original_count = len(points)
         method = self.hsl_config.downsample_method
         max_points = self.hsl_config.max_points
+
+        logger.info(f"⚠️ Downsampling: {original_count:,} points → {max_points:,} points (method: {method})")
 
         if method == "random":
             indices = np.random.choice(len(points), max_points, replace=False)

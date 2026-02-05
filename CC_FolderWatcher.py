@@ -9,10 +9,11 @@ Similar to Obsidian's vault monitoring.
 
 import logging
 from pathlib import Path
-from typing import Set, Optional
+from typing import Set, Optional, Dict
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileSystemEvent
 from PySide6.QtCore import QThread, Signal
+import time
 
 logger = logging.getLogger("CC_FolderWatcher")
 
@@ -140,19 +141,60 @@ class CC_FolderWatcher(QThread):
 
 
 class FolderEventHandler(FileSystemEventHandler):
-    """文件系统事件处理器"""
+    """文件系统事件处理器 with event debouncing"""
 
     def __init__(self, watcher: CC_FolderWatcher):
         super().__init__()
         self.watcher = watcher
+
+        # Event debouncing: track last event time for each file
+        self._last_event_time: Dict[Path, float] = {}
+        self._event_cooldown = 1.0  # seconds - ignore events within this window
+
+        # Track if a file is currently being created (to ignore immediate modify events)
+        self._recently_created: Dict[Path, float] = {}
+        self._creation_grace_period = 2.0  # seconds - ignore modify events after creation
+
+    def _should_process_event(self, path: Path, event_type: str) -> bool:
+        """Check if enough time has passed since last event for this file"""
+        current_time = time.time()
+
+        # Special handling for modify events after creation
+        if event_type == 'modified':
+            # If file was recently created, ignore modify events during grace period
+            if path in self._recently_created:
+                time_since_creation = current_time - self._recently_created[path]
+                if time_since_creation < self._creation_grace_period:
+                    return False
+                else:
+                    # Grace period expired, remove from tracking
+                    del self._recently_created[path]
+
+        # General debouncing: check last event time
+        event_key = path
+        if event_key in self._last_event_time:
+            time_since_last = current_time - self._last_event_time[event_key]
+            if time_since_last < self._event_cooldown:
+                return False
+
+        # Update last event time
+        self._last_event_time[event_key] = current_time
+        return True
 
     def on_created(self, event: FileSystemEvent):
         """文件创建事件"""
         if not event.is_directory:
             path = Path(event.src_path)
             if self.watcher.is_image(path):
+                if not self._should_process_event(path, 'created'):
+                    return
+
                 logger.info(f"[FolderWatcher] New photo detected: {path.name}")
                 self.watcher.known_photos.add(path)
+
+                # Track creation time to ignore immediate modify events
+                self._recently_created[path] = time.time()
+
                 self.watcher.new_photos_found.emit([path])
 
     def on_deleted(self, event: FileSystemEvent):
@@ -160,8 +202,16 @@ class FolderEventHandler(FileSystemEventHandler):
         if not event.is_directory:
             path = Path(event.src_path)
             if path in self.watcher.known_photos:
+                if not self._should_process_event(path, 'deleted'):
+                    return
+
                 logger.info(f"[FolderWatcher] Photo deleted: {path.name}")
                 self.watcher.known_photos.discard(path)
+
+                # Clean up tracking
+                self._last_event_time.pop(path, None)
+                self._recently_created.pop(path, None)
+
                 self.watcher.photos_removed.emit([path])
 
     def on_modified(self, event: FileSystemEvent):
@@ -169,5 +219,8 @@ class FolderEventHandler(FileSystemEventHandler):
         if not event.is_directory:
             path = Path(event.src_path)
             if self.watcher.is_image(path) and path in self.watcher.known_photos:
+                if not self._should_process_event(path, 'modified'):
+                    return
+
                 logger.info(f"[FolderWatcher] Photo modified: {path.name}")
                 self.watcher.photos_modified.emit([path])

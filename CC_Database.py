@@ -400,12 +400,15 @@ class CC_Database:
 
     # ========== Analysis Operations ==========
 
-    def save_analysis(self, photo_id: int, results: Dict, point_cloud: bytes = None):
+    def save_analysis(self, photo_id: int, results: Dict):
         """Save analysis results for a photo"""
         cursor = self.conn.cursor()
 
         # Delete old analysis results for this photo to avoid duplicates
         cursor.execute("DELETE FROM analysis_results WHERE photo_id = ?", (photo_id,))
+
+        # Extract point_cloud_data from results (if present)
+        point_cloud_data = results.get('point_cloud_data', None)
 
         # Ensure all numeric values are properly typed
         cursor.execute("""
@@ -441,7 +444,7 @@ class CC_Database:
             float(results.get('sat_normal', 0.0)),
             float(results.get('sat_high', 0.0)),
             float(results.get('sat_very_high', 0.0)),
-            point_cloud
+            point_cloud_data  # Use extracted point_cloud_data from results
         ))
         self.conn.commit()
         logger.info(f"Saved analysis for photo: {photo_id}")

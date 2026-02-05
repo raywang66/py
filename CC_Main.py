@@ -15,6 +15,29 @@ Features:
 
 import sys
 import logging
+
+# =============================================================================
+# CRITICAL: Configure logging FIRST, before any other imports!
+# Other modules (CC_SkinProcessor, CC_Database, etc.) create loggers during import.
+# If basicConfig() is not called first, Python creates a default buffer handler
+# that can cause NUL bytes and corruption in the log file.
+# =============================================================================
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(relativeCreated)d ms [%(name)s] %(message)s',
+    handlers=[
+        logging.FileHandler("chromacloud.log", mode='w', encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+# Ensure console output is UTF-8
+if sys.stdout.encoding != 'utf-8':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
+# Now safe to import other modules - logging is configured
 import time
 from pathlib import Path
 from typing import Optional, List
@@ -43,22 +66,6 @@ from cc_config import CC_PROJECT_NAME, CC_VERSION
 from CC_SkinProcessor import CC_SkinProcessor, MEDIAPIPE_AVAILABLE, RAWPY_AVAILABLE
 from CC_Database import CC_Database
 
-# Configure logger with relative timing (ms since program start)
-# Use UTF-8 encoding to handle emojis and Unicode characters
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(relativeCreated)8d ms [%(name)s] %(message)s',
-    handlers=[
-        logging.FileHandler("chromacloud.log", mode='w', encoding='utf-8'),
-        logging.StreamHandler(sys.stdout)  # Use stdout with UTF-8
-    ]
-)
-
-# Ensure console output is UTF-8
-if sys.stdout.encoding != 'utf-8':
-    import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 logger = logging.getLogger("CC_MainApp")
 
@@ -783,7 +790,10 @@ class CC_MainWindow(QMainWindow):
 
         # Use virtual photo grid instead of traditional grid
         from CC_VirtualPhotoGrid import SimpleVirtualPhotoGrid
-        self.photo_grid_widget = SimpleVirtualPhotoGrid(db=self.db)
+        self.photo_grid_widget = SimpleVirtualPhotoGrid(
+            db=self.db,
+            thumbnail_class=CC_PhotoThumbnail  # Pass class to avoid circular import
+        )
         self.photo_grid_widget.photo_clicked.connect(self._select_photo)
         self.photo_grid = self.photo_grid_widget  # Alias for compatibility
 
@@ -1583,17 +1593,20 @@ class CC_MainWindow(QMainWindow):
 
                 # 延迟加载：只加载 point cloud，image 和 mask 在点击 Visualize 时才加载
                 point_cloud_data = analysis.get('point_cloud_data')
+                logger.debug(f"[DEBUG] face_detected={analysis.get('face_detected')}, has point_cloud_data={point_cloud_data is not None}")
                 if point_cloud_data:
                     self.point_cloud = pickle.loads(point_cloud_data)
                     # Clear cached image/mask (will be loaded on demand)
                     self.current_photo_rgb = None
                     self.current_mask = None
                     self.visualize_btn.setEnabled(True)
-                    logger.debug(f"Point cloud loaded (deferred image/mask loading)")
+                    logger.info(f"✅ Visualize button ENABLED for {photo_path.name}")
                 else:
                     self.visualize_btn.setEnabled(False)
+                    logger.warning(f"⚠️ Visualize button DISABLED - no point_cloud_data for {photo_path.name}")
             else:
                 # 尚未分析
+                logger.info(f"No analysis found for {photo_path.name} - face_detected={analysis.get('face_detected') if analysis else 'N/A'}")
                 self.results_text.setText("⏳ Analysis pending or no face detected")
                 self.stats_text.setText("Click 'Analyze' button to process this photo")
                 self.visualize_btn.setEnabled(False)
@@ -1824,10 +1837,10 @@ class CC_MainWindow(QMainWindow):
                 'sat_low': sat_low,
                 'sat_normal': sat_normal,
                 'sat_high': sat_high,
-                'sat_very_high': sat_very_high
+                'sat_very_high': sat_very_high,
+                'point_cloud_data': pickle.dumps(point_cloud)  # Include in results dict
             }
-            point_cloud_bytes = pickle.dumps(point_cloud)
-            self.db.save_analysis(photo_id, results, point_cloud_bytes)
+            self.db.save_analysis(photo_id, results)
         except Exception as e:
             logger.error(f"Failed to save analysis: {e}")
 
@@ -1897,10 +1910,10 @@ class CC_MainWindow(QMainWindow):
                         'sat_low': result.get('sat_low', 0.0),
                         'sat_normal': result.get('sat_normal', 0.0),
                         'sat_high': result.get('sat_high', 0.0),
-                        'sat_very_high': result.get('sat_very_high', 0.0)
+                        'sat_very_high': result.get('sat_very_high', 0.0),
+                        'point_cloud_data': pickle.dumps(result['point_cloud'])  # Include in results dict
                     }
-                    point_cloud_bytes = pickle.dumps(result['point_cloud'])
-                    self.db.save_analysis(photo_id, analysis_data, point_cloud_bytes)
+                    self.db.save_analysis(photo_id, analysis_data)
                 except Exception as e:
                     logger.error(f"Failed to save result: {e}")
 

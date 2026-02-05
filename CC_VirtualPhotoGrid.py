@@ -21,10 +21,11 @@ class VirtualPhotoGrid(QWidget):
     """
     photo_clicked = Signal(Path)
 
-    def __init__(self, parent=None):
+    def __init__(self, db=None, thumbnail_class=None, parent=None):
         super().__init__(parent)
         self.photos: List[Path] = []
-        self.db = None
+        self.db = db
+        self.thumbnail_class = thumbnail_class  # Store thumbnail class to avoid circular import
         self.thumbnail_widgets = []  # Pool of reusable widgets
         self.visible_range = (0, 0)
         self.cols = 3
@@ -78,11 +79,13 @@ class VirtualPhotoGrid(QWidget):
 
     def _create_widget_pool(self):
         """Pre-create a pool of reusable thumbnail widgets"""
-        from CC_Main import CC_PhotoThumbnail
+        if self.thumbnail_class is None:
+            logger.warning("⚠️ Thumbnail class not set - skipping widget pool creation")
+            return
 
         # Create empty placeholder widgets
         for _ in range(self.widget_pool_size):
-            widget = CC_PhotoThumbnail(Path("placeholder.jpg"), db=self.db)
+            widget = self.thumbnail_class(Path("placeholder.jpg"), db=self.db)
             widget.setVisible(False)
             self.thumbnail_widgets.append(widget)
 
@@ -192,10 +195,11 @@ class SimpleVirtualPhotoGrid(QWidget):
     """
     photo_clicked = Signal(Path)
 
-    def __init__(self, db=None, parent=None):
+    def __init__(self, db=None, thumbnail_class=None, parent=None):
         super().__init__(parent)
         self.photos: List[Path] = []
         self.db = db
+        self.thumbnail_class = thumbnail_class  # Store thumbnail class to avoid circular import
         self.cols = 3
         self.widgets_created = 0
         self._loading_cancelled = False
@@ -232,6 +236,11 @@ class SimpleVirtualPhotoGrid(QWidget):
         if not photos:
             return
 
+        # Ensure thumbnail class is set
+        if self.thumbnail_class is None:
+            logger.error("⚠️ Thumbnail class not provided - cannot load photos!")
+            return
+
         # Calculate first batch size (visible photos + small buffer)
         # Typical screen shows ~15-20 photos, we load ~30 for smooth scrolling
         first_batch_size = min(30, len(photos))
@@ -242,13 +251,12 @@ class SimpleVirtualPhotoGrid(QWidget):
         self.setUpdatesEnabled(False)
 
         # Load first batch synchronously (instant!)
-        from CC_Main import CC_PhotoThumbnail
         for i in range(first_batch_size):
             photo_path = photos[i]
             row = i // self.cols
             col = i % self.cols
 
-            widget = CC_PhotoThumbnail(photo_path, db=self.db)
+            widget = self.thumbnail_class(photo_path, db=self.db)
             widget.mousePressEvent = lambda event, path=photo_path: self.photo_clicked.emit(path)
             self.layout.addWidget(widget, row, col)
             self.widgets_created += 1
@@ -290,7 +298,6 @@ class SimpleVirtualPhotoGrid(QWidget):
         # Disable updates during batch
         self.setUpdatesEnabled(False)
 
-        from CC_Main import CC_PhotoThumbnail
         for i in range(start_index, end_index):
             if self._loading_cancelled:
                 break
@@ -299,7 +306,7 @@ class SimpleVirtualPhotoGrid(QWidget):
             row = i // self.cols
             col = i % self.cols
 
-            widget = CC_PhotoThumbnail(photo_path, db=self.db)
+            widget = self.thumbnail_class(photo_path, db=self.db)
             widget.mousePressEvent = lambda event, path=photo_path: self.photo_clicked.emit(path)
             self.layout.addWidget(widget, row, col)
             self.widgets_created += 1
