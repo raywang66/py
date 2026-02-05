@@ -1,0 +1,12 @@
+/.idea
+/__pycache__
+/cc_env
+/output
+/Photos
+3D_HSL_Reference_Lines_Visualization.png
+chromacloud-01.db
+chromacloud.log
+chromacloud_logging.txt
+photo_count_report.txt
+test_logging.log
+test_output.txt
