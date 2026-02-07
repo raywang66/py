@@ -35,7 +35,9 @@ PySide6-Addons>=6.6.0       # Additional Qt modules
 # ============================================================================
 # torch>=2.0.0              # INSTALL SEPARATELY with CUDA support (see above)
 # torchvision>=0.15.0       # INSTALL SEPARATELY with CUDA support (see above)
-mediapipe>=0.10.0           # Google MediaPipe for face detection (replaces BiSeNet)
+mediapipe>=0.10.0,<=0.10.14 # Google MediaPipe for face detection
+                            # Windows: Uses 0.10.14 (last version with mp.solutions)
+                            # Code has version-compatible import for cross-platform support
 opencv-python>=4.8.0        # Image processing
 Pillow>=10.0.0              # Image I/O
 

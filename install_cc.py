@@ -9,8 +9,10 @@ proper GPU support:
 - macOS: MPS support (Apple Silicon M1/M2/M3/M4)
 
 Usage:
-    python install_cc.py              # Install to current Python environment
-    python install_cc.py --venv       # Create and use virtual environment (recommended)
+    python install_cc.py                    # Install to current Python environment
+    python install_cc.py --venv             # Create venv in ./cc_env (recommended)
+    python install_cc.py --venv ~/CC        # Create venv at custom path
+    python install_cc.py --venv /opt/cc_env # Create venv at absolute path
 """
 
 import subprocess
@@ -44,14 +46,29 @@ if use_venv and not in_venv:
     print("STEP 0: Setting up virtual environment...")
     print("-" * 70)
 
-    venv_name = "cc_env"
-    venv_path = Path(__file__).parent / venv_name
+    # Parse custom venv path if provided
+    venv_path = None
+    for i, arg in enumerate(sys.argv):
+        if arg in ["--venv", "-v"]:
+            # Check if next argument is a path
+            if i + 1 < len(sys.argv) and not sys.argv[i + 1].startswith("-"):
+                custom_path = sys.argv[i + 1]
+                venv_path = Path(custom_path).expanduser().resolve()
+                print(f"Using custom virtual environment path: {venv_path}")
+            break
+
+    # Default to cc_env in current directory if no path specified
+    if venv_path is None:
+        venv_path = Path(__file__).parent / "cc_env"
+        print(f"Using default virtual environment path: {venv_path}")
 
     if venv_path.exists():
         print(f"✓ Virtual environment already exists: {venv_path}")
     else:
         print(f"Creating virtual environment: {venv_path}")
         try:
+            # Create parent directories if they don't exist
+            venv_path.parent.mkdir(parents=True, exist_ok=True)
             venv.create(venv_path, with_pip=True)
             print(f"✓ Virtual environment created successfully")
         except Exception as e:
@@ -357,8 +374,17 @@ except ImportError as e:
 
 # Test PySide6
 try:
-    from PySide6.QtCore import QT_VERSION_STR
-    print(f"✓ PySide6 (Qt {QT_VERSION_STR}) installed")
+    import PySide6
+    from PySide6 import QtCore
+    # Try different ways to get Qt version (API changed in newer versions)
+    try:
+        qt_version = QtCore.QT_VERSION_STR
+    except AttributeError:
+        try:
+            qt_version = QtCore.qVersion()
+        except:
+            qt_version = PySide6.__version__
+    print(f"✓ PySide6 (Qt {qt_version}) installed")
 except ImportError as e:
     print(f"✗ PySide6 import failed: {e}")
 

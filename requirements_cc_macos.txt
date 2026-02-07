@@ -32,7 +32,10 @@ PySide6-Addons>=6.6.0       # Additional Qt modules
 # ============================================================================
 # torch>=2.0.0              # INSTALL SEPARATELY (see above for MPS support)
 # torchvision>=0.15.0       # INSTALL SEPARATELY (see above for MPS support)
-mediapipe>=0.10.0           # Google MediaPipe for face detection (replaces BiSeNet)
+mediapipe>=0.10.30          # Google MediaPipe for face detection
+                            # macOS: Uses MediaPipe 0.10.30+ with tasks API
+                            # ChromaCloud now supports both legacy and tasks API
+                            # Code automatically detects and uses appropriate API
 opencv-python>=4.8.0        # Image processing
 Pillow>=10.0.0              # Image I/O
 

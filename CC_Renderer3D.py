@@ -194,9 +194,19 @@ class CC_Renderer3D:
             hsl_points: Nx3 array with (Hue[0-360], Saturation[0-1], Lightness[0-1])
             color_mode: 'hsl' (use HSL values) or 'uniform' (single color)
         """
-        n = min(len(hsl_points), self.max_points)
+        import logging
+        logger = logging.getLogger("CC_Renderer3D")
+
+        total_points = len(hsl_points)
+        n = min(total_points, self.max_points)
         self.num_points[None] = n
         self.dual_mode[None] = 0
+
+        if total_points > self.max_points:
+            logger.warning(f"Point cloud has {total_points:,} points, but renderer is limited to {self.max_points:,} points. "
+                         f"{total_points - self.max_points:,} points will not be displayed.")
+        else:
+            logger.info(f"Rendering {n:,} points")
 
         # Convert HSL to 3D cylindrical coordinates
         positions = np.zeros((n, 3), dtype=np.float32)

@@ -15,6 +15,29 @@ Features:
 
 import sys
 import logging
+import platform
+from pathlib import Path
+
+# =============================================================================
+# Platform-specific data directory setup
+# =============================================================================
+def get_data_directory():
+    """Get platform-specific data directory for ChromaCloud files"""
+    os_type = platform.system()
+
+    if os_type == "Darwin":  # macOS
+        # Use ~/CC for data files when running on macOS (SMB share friendly)
+        data_dir = Path.home() / "CC"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        return data_dir
+    else:
+        # Windows/Linux: use script directory
+        return Path(__file__).parent
+
+# Get data directory
+DATA_DIR = get_data_directory()
+LOG_FILE = DATA_DIR / "chromacloud.log"
+DB_FILE = DATA_DIR / "chromacloud.db"
 
 # =============================================================================
 # CRITICAL: Configure logging FIRST, before any other imports!
@@ -26,7 +49,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(relativeCreated)d ms [%(name)s] %(message)s',
     handlers=[
-        logging.FileHandler("chromacloud.log", mode='w', encoding='utf-8'),
+        logging.FileHandler(str(LOG_FILE), mode='w', encoding='utf-8'),
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -39,7 +62,6 @@ if sys.stdout.encoding != 'utf-8':
 
 # Now safe to import other modules - logging is configured
 import time
-from pathlib import Path
 from typing import Optional, List
 import pickle
 
@@ -68,6 +90,9 @@ from CC_Database import CC_Database
 
 
 logger = logging.getLogger("CC_MainApp")
+logger.info(f"ChromaCloud data directory: {DATA_DIR}")
+logger.info(f"Database: {DB_FILE}")
+logger.info(f"Log file: {LOG_FILE}")
 
 
 # =============================================================================
@@ -480,7 +505,7 @@ class CC_MainWindow(QMainWindow):
             sys.exit(1)
 
         self.processor = CC_SkinProcessor()
-        self.db = CC_Database()
+        self.db = CC_Database(db_path=DB_FILE)
 
         # State
         self.current_photo: Optional[Path] = None
@@ -2305,7 +2330,7 @@ class CC_Visualization3DWindow(QWidget):
         content_layout.addWidget(left_panel)
 
         # RIGHT: 3D HSL point cloud
-        right_panel = QGroupBox("3D HSL 圆柱楔形 (H: 15-25°)")
+        right_panel = QGroupBox("3D HSL 圆柱楔形可视化")
         right_layout = QVBoxLayout(right_panel)
 
         if self.renderer and len(self.point_cloud) > 0:
@@ -2332,8 +2357,16 @@ class CC_Visualization3DWindow(QWidget):
             right_layout.addWidget(self.render_label)
 
             # Controls info
+            total_points = len(self.point_cloud)
+            displayed_points = min(total_points, self.renderer.max_points)
+
+            if total_points > displayed_points:
+                points_info = f"{displayed_points:,} / {total_points:,} 个点已可视化 (受限于最大点数)"
+            else:
+                points_info = f"{displayed_points:,} 个点已可视化"
+
             controls_info = QLabel(
-                f"{len(self.point_cloud):,} 个点已可视化\n"
+                f"{points_info}\n"
                 f"🖱️ 左键拖动: 旋转 | 滚轮: 缩放\n"
                 f"颜色: HSL 映射到 RGB\n"
                 f"⬆️ Y轴: 亮度 (0-100%) | 📐 角度: 色调 | 📏 半径: 饱和度"

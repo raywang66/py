@@ -19,10 +19,85 @@ from PIL import Image
 
 try:
     import mediapipe as mp
+
+    # Version-compatible import for MediaPipe
+    # MediaPipe has gone through several API restructurings:
+    # - 0.10.14 and earlier: mp.solutions.face_mesh (Windows)
+    # - 0.10.15-0.10.29: mediapipe.python.solutions.face_mesh
+    # - 0.10.30+: mediapipe.tasks.python.vision.FaceLandmarker (new tasks API, macOS)
+
+    mp_face_mesh_module = None
+    mp_tasks_python = None
+    mp_tasks_vision = None
+    MEDIAPIPE_API = None
+    USE_LEGACY_API = False
+    USE_TASKS_API = False
+
+    # Try 1: mediapipe.python.solutions (v0.10.15-0.10.29)
+    try:
+        from mediapipe.python.solutions import face_mesh as mp_face_mesh_module
+        MEDIAPIPE_API = "python.solutions"
+        MEDIAPIPE_VERSION_INFO = f"MediaPipe {mp.__version__} (python.solutions API)"
+        USE_LEGACY_API = True
+    except ImportError:
+        pass
+
+    # Try 2: mp.solutions (v0.10.14 and earlier, Windows)
+    if mp_face_mesh_module is None:
+        try:
+            if hasattr(mp, 'solutions'):
+                mp_face_mesh_module = mp.solutions.face_mesh
+                MEDIAPIPE_API = "mp.solutions"
+                MEDIAPIPE_VERSION_INFO = f"MediaPipe {mp.__version__} (mp.solutions legacy API)"
+                USE_LEGACY_API = True
+        except (ImportError, AttributeError):
+            pass
+
+    # Try 3: mediapipe.solutions (direct import, some versions)
+    if mp_face_mesh_module is None:
+        try:
+            from mediapipe import solutions
+            mp_face_mesh_module = solutions.face_mesh
+            MEDIAPIPE_API = "solutions"
+            MEDIAPIPE_VERSION_INFO = f"MediaPipe {mp.__version__} (solutions API)"
+            USE_LEGACY_API = True
+        except (ImportError, AttributeError):
+            pass
+
+    # Try 4: New tasks API (v0.10.30+, macOS)
+    if mp_face_mesh_module is None and hasattr(mp, 'tasks'):
+        try:
+            from mediapipe.tasks import python as mp_tasks_python
+            from mediapipe.tasks.python import vision as mp_tasks_vision
+            MEDIAPIPE_API = "tasks"
+            MEDIAPIPE_VERSION_INFO = f"MediaPipe {mp.__version__} (tasks API)"
+            USE_TASKS_API = True
+            # Note: logger not defined yet, will log in class __init__
+        except ImportError as e:
+            # Can't use logger yet, will warn later
+            pass
+
+    # If nothing worked
+    if mp_face_mesh_module is None and not USE_TASKS_API:
+        raise ImportError(
+            f"MediaPipe {mp.__version__} - No compatible API found.\n"
+            f"Tried: python.solutions, mp.solutions, solutions, tasks.\n"
+            f"Available: {dir(mp)}\n"
+            f"Try reinstalling: pip uninstall mediapipe -y && pip install mediapipe"
+        )
+
     MEDIAPIPE_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     MEDIAPIPE_AVAILABLE = False
-    print("WARNING: MediaPipe not installed. Install with: pip install mediapipe")
+    mp_face_mesh_module = None
+    mp_tasks_python = None
+    mp_tasks_vision = None
+    MEDIAPIPE_API = None
+    MEDIAPIPE_VERSION_INFO = None
+    USE_LEGACY_API = False
+    USE_TASKS_API = False
+    print(f"WARNING: MediaPipe not installed or incompatible: {e}")
+    print("Install with: pip install mediapipe")
 
 try:
     import rawpy
@@ -46,8 +121,11 @@ class CC_MediaPipeFaceDetector:
     """
     Modern face detection using Google MediaPipe.
 
+    Supports both legacy API (0.10.14 and earlier) and new tasks API (0.10.30+).
+    Automatically detects and uses the appropriate API based on installed version.
+
     Advantages over BiSeNet:
-    - No manual model download required
+    - No manual model download required (legacy API)
     - Actively maintained (2024+)
     - Fast CPU inference
     - Precise face landmarks (468 points)
@@ -57,16 +135,16 @@ class CC_MediaPipeFaceDetector:
         if not MEDIAPIPE_AVAILABLE:
             raise ImportError("MediaPipe not installed. Run: pip install mediapipe")
 
-        self.mp_face_mesh = mp.solutions.face_mesh
-        self.face_mesh = self.mp_face_mesh.FaceMesh(
-            static_image_mode=True,
-            max_num_faces=1,
-            refine_landmarks=True,
-            min_detection_confidence=0.5
-        )
+        # Initialize based on available API
+        if USE_LEGACY_API:
+            self._init_legacy_api()
+        elif USE_TASKS_API:
+            self._init_tasks_api()
+        else:
+            raise ImportError("No compatible MediaPipe API available")
 
         # Face mesh landmark indices for different regions
-        # These are standard MediaPipe Face Mesh indices
+        # These are standard MediaPipe Face Mesh indices (same for both APIs)
         self.FACE_OVAL = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288,
                           397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136,
                           172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109]
@@ -84,11 +162,95 @@ class CC_MediaPipeFaceDetector:
         self.LEFT_EYEBROW = [70, 63, 105, 66, 107, 55, 65, 52, 53, 46]
         self.RIGHT_EYEBROW = [300, 293, 334, 296, 336, 285, 295, 282, 283, 276]
 
-        logger.info("MediaPipe Face Mesh initialized")
+        if MEDIAPIPE_VERSION_INFO:
+            logger.info(f"MediaPipe Face Mesh initialized - {MEDIAPIPE_VERSION_INFO}")
+        else:
+            logger.info("MediaPipe Face Mesh initialized")
+
+    def _init_legacy_api(self):
+        """Initialize legacy API (MediaPipe 0.10.14 and earlier)"""
+        self.mp_face_mesh = mp_face_mesh_module
+        self.face_mesh = self.mp_face_mesh.FaceMesh(
+            static_image_mode=True,
+            max_num_faces=1,
+            refine_landmarks=True,
+            min_detection_confidence=0.5
+        )
+        self.use_tasks_api = False
+        logger.info("Using legacy MediaPipe API (Windows/older versions)")
+
+    def _init_tasks_api(self):
+        """Initialize tasks API (MediaPipe 0.10.30+, macOS)"""
+        from mediapipe.tasks.python import vision
+
+        # For tasks API, we need to download/specify model file
+        # The model is bundled with MediaPipe, we just need to find it
+        import mediapipe as mp_local
+        import os
+
+        # Try to find the bundled face_landmarker model
+        mp_module_path = Path(mp_local.__file__).parent
+        possible_model_paths = [
+            mp_module_path / "modules" / "face_landmarker" / "face_landmarker.task",
+            mp_module_path / "models" / "face_landmarker.task",
+            # Model might be in mediapipe package data
+        ]
+
+        model_path = None
+        for path in possible_model_paths:
+            if path.exists():
+                model_path = str(path)
+                break
+
+        # If bundled model not found, download from MediaPipe
+        if model_path is None:
+            # Download model to current directory
+            model_path = self._download_face_landmarker_model()
+
+        # Create FaceLandmarker
+        base_options = mp_tasks_python.BaseOptions(model_asset_path=model_path)
+        options = vision.FaceLandmarkerOptions(
+            base_options=base_options,
+            num_faces=1,
+            min_face_detection_confidence=0.5,
+            min_face_presence_confidence=0.5,
+            min_tracking_confidence=0.5,
+            output_face_blendshapes=False,
+            output_facial_transformation_matrixes=False
+        )
+
+        self.face_landmarker = vision.FaceLandmarker.create_from_options(options)
+        self.use_tasks_api = True
+        logger.info(f"Using tasks MediaPipe API (macOS) - model: {model_path}")
+
+    def _download_face_landmarker_model(self) -> str:
+        """Download face_landmarker model if not bundled"""
+        import urllib.request
+
+        model_url = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
+        model_path = Path("face_landmarker.task")
+
+        if model_path.exists():
+            logger.info(f"Using existing face_landmarker model: {model_path}")
+            return str(model_path)
+
+        logger.info(f"Downloading face_landmarker model from {model_url}...")
+        try:
+            urllib.request.urlretrieve(model_url, model_path)
+            logger.info(f"Model downloaded successfully: {model_path}")
+            return str(model_path)
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to download face_landmarker model: {e}\n"
+                f"Please download manually from:\n"
+                f"  {model_url}\n"
+                f"And place it in: {model_path}"
+            )
 
     def detect_face_mask(self, image_rgb: np.ndarray) -> np.ndarray:
         """
         Detect face and create skin mask using MediaPipe.
+        Works with both legacy and tasks API.
 
         Args:
             image_rgb: RGB image (H, W, 3) with values [0, 255]
@@ -98,7 +260,18 @@ class CC_MediaPipeFaceDetector:
         """
         h, w = image_rgb.shape[:2]
 
-        # Process with MediaPipe
+        if USE_LEGACY_API:
+            return self._detect_face_mask_legacy(image_rgb)
+        elif USE_TASKS_API:
+            return self._detect_face_mask_tasks(image_rgb)
+        else:
+            raise RuntimeError("No MediaPipe API available")
+
+    def _detect_face_mask_legacy(self, image_rgb: np.ndarray) -> np.ndarray:
+        """Detect face using legacy API (Windows/older versions)"""
+        h, w = image_rgb.shape[:2]
+
+        # Process with MediaPipe legacy API
         results = self.face_mesh.process(image_rgb)
 
         if not results.multi_face_landmarks:
@@ -108,7 +281,41 @@ class CC_MediaPipeFaceDetector:
         # Get face landmarks
         face_landmarks = results.multi_face_landmarks[0]
 
-        # Create mask
+        # ...existing mask creation code...
+        return self._create_mask_from_landmarks(face_landmarks, h, w)
+
+    def _detect_face_mask_tasks(self, image_rgb: np.ndarray) -> np.ndarray:
+        """Detect face using tasks API (macOS 0.10.30+)"""
+        h, w = image_rgb.shape[:2]
+
+        # Convert to MediaPipe Image format
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_rgb)
+
+        # Detect face landmarks
+        detection_result = self.face_landmarker.detect(mp_image)
+
+        if not detection_result.face_landmarks:
+            logger.warning("No face detected in image")
+            return np.zeros((h, w), dtype=np.uint8)
+
+        # Get face landmarks (tasks API returns normalized coordinates)
+        face_landmarks = detection_result.face_landmarks[0]
+
+        # Convert to legacy format for compatibility with existing code
+        class LandmarkWrapper:
+            def __init__(self, landmarks):
+                self.landmark = landmarks
+
+        landmarks_wrapped = LandmarkWrapper(face_landmarks)
+
+        # ...existing mask creation code...
+        return self._create_mask_from_landmarks(landmarks_wrapped, h, w)
+
+    def _create_mask_from_landmarks(self, face_landmarks, h: int, w: int) -> np.ndarray:
+        """
+        Create skin mask from face landmarks.
+        Common code path for both legacy and tasks API.
+        """
         mask = np.zeros((h, w), dtype=np.uint8)
 
         # Convert landmarks to pixel coordinates
