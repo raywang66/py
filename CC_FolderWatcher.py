@@ -18,6 +18,41 @@ import time
 logger = logging.getLogger("CC_FolderWatcher")
 
 
+def should_skip_file(file_path: Path) -> bool:
+    """
+    Check if file should be skipped (AppleDouble and macOS metadata files).
+
+    Filters out:
+    - .DS_Store (macOS folder metadata)
+    - ._* files (AppleDouble resource fork files)
+    - .Spotlight-V100 (macOS Spotlight index)
+    - .Trashes (macOS trash)
+    - .fseventsd (macOS file system events)
+    - Thumbs.db (Windows thumbnail cache)
+    - desktop.ini (Windows folder settings)
+    """
+    filename = file_path.name
+
+    # Skip macOS metadata files
+    if filename == '.DS_Store':
+        return True
+
+    # Skip AppleDouble resource fork files (._filename)
+    if filename.startswith('._'):
+        return True
+
+    # Skip macOS system directories/files
+    if filename in {'.Spotlight-V100', '.Trashes', '.fseventsd', '.TemporaryItems',
+                    '.VolumeIcon.icns', '.DocumentRevisions-V100', '.PKInstallSandboxManager'}:
+        return True
+
+    # Skip Windows metadata files
+    if filename in {'Thumbs.db', 'desktop.ini', 'Desktop.ini'}:
+        return True
+
+    return False
+
+
 class CC_FolderWatcher(QThread):
     """文件夹监控线程，自动发现新照片"""
 
@@ -110,7 +145,9 @@ class CC_FolderWatcher(QThread):
             logger.info(f"[FolderWatcher] Stopped monitoring: {self.folder_path}")
 
     def is_image(self, path: Path) -> bool:
-        """检查文件是否为图片"""
+        """检查文件是否为图片（并排除AppleDouble和元数据文件）"""
+        if should_skip_file(path):
+            return False
         return path.suffix in self.image_extensions
 
     def run(self):

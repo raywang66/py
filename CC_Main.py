@@ -96,6 +96,46 @@ logger.info(f"Log file: {LOG_FILE}")
 
 
 # =============================================================================
+# Helper Functions
+# =============================================================================
+
+def should_skip_file(file_path: Path) -> bool:
+    """
+    Check if file should be skipped (AppleDouble and macOS metadata files).
+
+    Filters out:
+    - .DS_Store (macOS folder metadata)
+    - ._* files (AppleDouble resource fork files)
+    - .Spotlight-V100 (macOS Spotlight index)
+    - .Trashes (macOS trash)
+    - .fseventsd (macOS file system events)
+    - .TemporaryItems (macOS temporary files)
+    - Thumbs.db (Windows thumbnail cache)
+    - desktop.ini (Windows folder settings)
+    """
+    filename = file_path.name
+
+    # Skip macOS metadata files
+    if filename == '.DS_Store':
+        return True
+
+    # Skip AppleDouble resource fork files (._filename)
+    if filename.startswith('._'):
+        return True
+
+    # Skip macOS system directories
+    if filename in {'.Spotlight-V100', '.Trashes', '.fseventsd', '.TemporaryItems',
+                    '.VolumeIcon.icns', '.DocumentRevisions-V100', '.PKInstallSandboxManager'}:
+        return True
+
+    # Skip Windows metadata files
+    if filename in {'Thumbs.db', 'desktop.ini', 'Desktop.ini'}:
+        return True
+
+    return False
+
+
+# =============================================================================
 # Thread Classes
 # =============================================================================
 
@@ -137,9 +177,12 @@ class FolderScanWorker(QThread):
             return structure
 
         try:
-            # Count direct photos
+            # Count direct photos (skip AppleDouble and metadata files)
             for item in dir_path.iterdir():
                 if item.is_file() and item.suffix in self.image_extensions:
+                    # Skip AppleDouble and metadata files
+                    if should_skip_file(item):
+                        continue
                     structure['direct_photos'] += 1
 
             structure['total_photos'] = structure['direct_photos']
@@ -149,8 +192,10 @@ class FolderScanWorker(QThread):
                            key=lambda x: x.name.lower())
 
             for subdir in subdirs:
-                # Skip hidden and system directories
+                # Skip hidden, system directories, and macOS metadata
                 if subdir.name.startswith('.') or subdir.name.startswith('__'):
+                    continue
+                if should_skip_file(subdir):
                     continue
 
                 sub_structure = self._scan_folder_structure(subdir, str(dir_path))
@@ -1019,7 +1064,9 @@ class CC_MainWindow(QMainWindow):
                 direct_item.setToolTip(0, f"直接在 {dir_path} 中的照片")
 
             # 获取所有子目录，排序
-            subdirs = sorted([d for d in dir_path.iterdir() if d.is_dir()], key=lambda x: x.name.lower())
+            subdirs = sorted([d for d in dir_path.iterdir()
+                            if d.is_dir() and not should_skip_file(d)],
+                           key=lambda x: x.name.lower())
 
             for subdir in subdirs:
                 # 跳过隐藏目录和系统目录
@@ -1400,6 +1447,9 @@ class CC_MainWindow(QMainWindow):
         import time
 
         start_time = time.time()
+
+        # Filter out AppleDouble and metadata files
+        photo_paths = [p for p in photo_paths if not should_skip_file(p)]
 
         total_count = len(photo_paths)
 
