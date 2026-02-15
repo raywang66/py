@@ -205,7 +205,7 @@ class SimpleVirtualPhotoGrid(QWidget):
         self._loading_cancelled = False
 
         self.layout = QGridLayout(self)
-        self.layout.setSpacing(10)
+        self.layout.setSpacing(3)  # Very tight spacing - macOS Photos style at max zoom
         self.layout.setContentsMargins(0, 0, 0, 0)
 
     def count(self):

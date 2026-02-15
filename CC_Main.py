@@ -325,22 +325,31 @@ class CC_BatchProcessingThread(QThread):
 class CC_PhotoThumbnail(QFrame):
     """Photo thumbnail widget with proper aspect ratio - OPTIMIZED with lazy loading and database cache"""
 
+    # Class variable for current thumbnail size (can be adjusted by zoom slider)
+    _thumbnail_size = 200  # Default size
+
     def __init__(self, image_path: Path, db=None, parent=None):
         super().__init__(parent)
         self.image_path = image_path
         self.db = db  # Database for thumbnail cache
+        self.is_selected = False  # Track selection state
         self.setFrameStyle(QFrame.NoFrame)
         self.setLineWidth(0)
-        self.setFixedSize(220, 270)
 
+        # Use class variable for dynamic sizing
+        size = CC_PhotoThumbnail._thumbnail_size
+        self.setFixedSize(size, size)
+
+        # Container with no margins - centered content
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # Thumbnail with fixed container but preserving aspect ratio
+        # Thumbnail label - will size to actual pixmap
         self.thumbnail_label = QLabel()
-        self.thumbnail_label.setFixedSize(210, 210)
         self.thumbnail_label.setAlignment(Qt.AlignCenter)
-        self.thumbnail_label.setStyleSheet("background-color: transparent; border: none;")
+        self.thumbnail_label.setStyleSheet("background-color: transparent;")
 
         # Show placeholder immediately
         self._show_placeholder()
@@ -348,30 +357,114 @@ class CC_PhotoThumbnail(QFrame):
         # Load thumbnail asynchronously
         self._load_thumbnail_async()
 
-        # Filename
-        filename_label = QLabel(image_path.name)
-        filename_label.setWordWrap(True)
-        filename_label.setAlignment(Qt.AlignCenter)
-        filename_label.setStyleSheet("color: #000; font-size: 11px; background-color: transparent;")
-        filename_label.setMaximumHeight(40)
-
         layout.addWidget(self.thumbnail_label)
-        layout.addWidget(filename_label)
 
-        self.setStyleSheet("""
-            CC_PhotoThumbnail {
+        # Create selection overlay (initially hidden)
+        self.selection_overlay = QLabel(self)
+        self.selection_overlay.setVisible(False)
+        self.selection_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+        # Container style
+        self.setStyleSheet("background-color: transparent;")
+
+    def set_selected(self, selected: bool):
+        """Set selection state with macOS Photos blue accent"""
+        self.is_selected = selected
+        self._update_selection_overlay()
+
+    def _apply_rounded_corners(self, pixmap: QPixmap, radius: int = None) -> QPixmap:
+        """Apply rounded corners to a pixmap - macOS Photos style
+
+        Args:
+            pixmap: The pixmap to apply rounded corners to
+            radius: Corner radius in pixels. If None, calculated as 5% of thumbnail size
+        """
+        from PySide6.QtGui import QPainter, QPainterPath
+        from PySide6.QtCore import QRectF, Qt as QtCore
+
+        # Calculate dynamic radius if not provided (5% of size, min 6px, max 12px)
+        if radius is None:
+            size = CC_PhotoThumbnail._thumbnail_size
+            radius = max(6, min(12, int(size * 0.05)))
+
+        # Create a new pixmap with transparency
+        rounded = QPixmap(pixmap.size())
+        rounded.fill(QtCore.GlobalColor.transparent)
+
+        # Create painter
+        painter = QPainter(rounded)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+
+        # Create rounded rectangle path
+        path = QPainterPath()
+        rect = QRectF(0, 0, pixmap.width(), pixmap.height())
+        path.addRoundedRect(rect, radius, radius)
+
+        # Clip to rounded rectangle and draw original pixmap
+        painter.setClipPath(path)
+        painter.drawPixmap(0, 0, pixmap)
+        painter.end()
+
+        return rounded
+
+    def _update_selection_overlay(self):
+        """Update selection overlay to match actual image size - macOS Photos way"""
+        if not self.is_selected:
+            self.selection_overlay.setVisible(False)
+            return
+
+        # Get actual pixmap size from label
+        pixmap = self.thumbnail_label.pixmap()
+        if not pixmap or pixmap.isNull():
+            self.selection_overlay.setVisible(False)
+            return
+
+        # Get actual image dimensions
+        img_width = pixmap.width()
+        img_height = pixmap.height()
+
+        # Calculate position to center the overlay on the image
+        container_size = CC_PhotoThumbnail._thumbnail_size
+        x = (container_size - img_width) // 2
+        y = (container_size - img_height) // 2
+
+        # Position and size the overlay to match the image
+        border_width = 4
+        self.selection_overlay.setGeometry(
+            x - border_width,
+            y - border_width,
+            img_width + border_width * 2,
+            img_height + border_width * 2
+        )
+
+        # Calculate dynamic border radius
+        size = min(img_width, img_height)
+        border_radius = max(8, min(14, int(size * 0.06)))
+
+        # Apply macOS blue border
+        self.selection_overlay.setStyleSheet(f"""
+            QLabel {{
                 background-color: transparent;
-                border: none;
-            }
-            CC_PhotoThumbnail:hover {
-                background-color: transparent;
-            }
+                border: {border_width}px solid #007AFF;
+                border-radius: {border_radius}px;
+            }}
         """)
+
+        self.selection_overlay.setVisible(True)
+
+    def _set_pixmap(self, pixmap: QPixmap):
+        """Set pixmap and update selection overlay"""
+        self.thumbnail_label.setPixmap(pixmap)
+        # Update overlay if selected
+        if self.is_selected:
+            self._update_selection_overlay()
 
     def _show_placeholder(self):
         """Show placeholder while loading"""
-        pixmap = QPixmap(210, 210)
-        pixmap.fill(QColor(240, 240, 240))
+        size = CC_PhotoThumbnail._thumbnail_size
+        pixmap = QPixmap(size, size)
+        pixmap.fill(QColor(245, 245, 245))
 
         # Draw loading icon (simple gray square with text)
         from PySide6.QtGui import QPainter, QFont
@@ -382,7 +475,9 @@ class CC_PhotoThumbnail(QFrame):
         painter.drawText(pixmap.rect(), Qt.AlignCenter, "Loading...")
         painter.end()
 
-        self.thumbnail_label.setPixmap(pixmap)
+        # Apply rounded corners to placeholder (dynamic radius)
+        rounded_pixmap = self._apply_rounded_corners(pixmap)
+        self._set_pixmap(rounded_pixmap)
 
     def _load_thumbnail_async(self):
         """Load thumbnail in background using QTimer (non-blocking)"""
@@ -391,10 +486,19 @@ class CC_PhotoThumbnail(QFrame):
         QTimer.singleShot(1, self._load_thumbnail)
 
     def _load_thumbnail(self):
-        """Load thumbnail preserving aspect ratio - WITH DATABASE CACHE"""
+        """Load thumbnail preserving aspect ratio - WITH DATABASE CACHE
+
+        Strategy: Generate thumbnails at max size (400px) for best quality.
+        Scale down for display using Qt when zoomed out.
+        """
         thumbnail_start = time.time()
         thumbnail_bytes = None
         cache_hit = False
+
+        # Always use MAX size for generation/cache (best quality)
+        MAX_THUMBNAIL_SIZE = 400
+        # Current display size (may be smaller)
+        display_size = CC_PhotoThumbnail._thumbnail_size
 
         try:
             # ⚡️ STEP 1: Try to load from database cache
@@ -412,11 +516,25 @@ class CC_PhotoThumbnail(QFrame):
                     # Update access time for LRU
                     self.db.update_thumbnail_access_time(str(self.image_path))
 
-                    # Convert to QPixmap and display
+                    # Convert to QPixmap (at full cached size)
+                    if img.mode != 'RGB':
+                        img = img.convert('RGB')
+
                     data = img.tobytes('raw', 'RGB')
                     qimage = QImage(data, img.width, img.height, img.width * 3, QImage.Format_RGB888)
                     pixmap = QPixmap.fromImage(qimage)
-                    self.thumbnail_label.setPixmap(pixmap)
+
+                    # Scale down if needed for current zoom level
+                    if display_size < MAX_THUMBNAIL_SIZE:
+                        pixmap = pixmap.scaled(
+                            display_size, display_size,
+                            Qt.AspectRatioMode.KeepAspectRatio,
+                            Qt.TransformationMode.SmoothTransformation
+                        )
+
+                    # Apply rounded corners - macOS Photos style (dynamic radius)
+                    rounded_pixmap = self._apply_rounded_corners(pixmap)
+                    self._set_pixmap(rounded_pixmap)
 
                     # Track statistics
                     thumbnail_elapsed = time.time() - thumbnail_start
@@ -429,8 +547,8 @@ class CC_PhotoThumbnail(QFrame):
 
                     return  # Done!
 
-            # ⚡️ STEP 2: Cache miss - generate thumbnail
-            logger.debug(f"Cache MISS: {self.image_path.name} - generating...")
+            # ⚡️ STEP 2: Cache miss - generate thumbnail at MAX size
+            logger.debug(f"Cache MISS: {self.image_path.name} - generating at {MAX_THUMBNAIL_SIZE}px...")
 
             # Fast path: try to use embedded thumbnail for JPEG
             if self.image_path.suffix.lower() in {'.jpg', '.jpeg'}:
@@ -438,7 +556,7 @@ class CC_PhotoThumbnail(QFrame):
 
                 # Try to extract embedded thumbnail (much faster)
                 try:
-                    img.draft('RGB', (210, 210))  # Fast low-quality load
+                    img.draft('RGB', (MAX_THUMBNAIL_SIZE, MAX_THUMBNAIL_SIZE))
                 except:
                     pass
 
@@ -454,27 +572,38 @@ class CC_PhotoThumbnail(QFrame):
                             rgb = raw.postprocess(use_camera_wb=True, half_size=True)
                             img = Image.fromarray(rgb)
                 else:
-                    pixmap = QPixmap(210, 210)
+                    pixmap = QPixmap(display_size, display_size)
                     pixmap.fill(QColor(245, 245, 245))
-                    self.thumbnail_label.setPixmap(pixmap)
+                    rounded_pixmap = self._apply_rounded_corners(pixmap)
+                    self._set_pixmap(rounded_pixmap)
                     return
             else:
                 img = Image.open(self.image_path)
 
-            # Resize preserving aspect ratio - use LANCZOS for quality
-            img.thumbnail((210, 210), Image.Resampling.LANCZOS)
+            # Resize to MAX size - use LANCZOS for quality
+            img.thumbnail((MAX_THUMBNAIL_SIZE, MAX_THUMBNAIL_SIZE), Image.Resampling.LANCZOS)
 
             if img.mode != 'RGB':
                 img = img.convert('RGB')
 
-            # Convert to QPixmap
+            # Convert to QPixmap (at MAX size)
             data = img.tobytes('raw', 'RGB')
             qimage = QImage(data, img.width, img.height, img.width * 3, QImage.Format_RGB888)
             pixmap = QPixmap.fromImage(qimage)
 
-            self.thumbnail_label.setPixmap(pixmap)
+            # Scale down if needed for current zoom level
+            if display_size < MAX_THUMBNAIL_SIZE:
+                pixmap = pixmap.scaled(
+                    display_size, display_size,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                )
 
-            # ⚡️ STEP 3: Save to database cache for next time
+            # Apply rounded corners - macOS Photos style (dynamic radius)
+            rounded_pixmap = self._apply_rounded_corners(pixmap)
+            self._set_pixmap(rounded_pixmap)
+
+            # ⚡️ STEP 3: Save to database cache at MAX size for next time
             if self.db and self.image_path.exists():
                 from io import BytesIO
                 buffer = BytesIO()
@@ -489,7 +618,7 @@ class CC_PhotoThumbnail(QFrame):
                     img.width,
                     img.height
                 )
-                logger.debug(f"Cached: {self.image_path.name} ({len(thumbnail_data)/1024:.1f} KB)")
+                logger.debug(f"Cached at MAX size: {self.image_path.name} ({len(thumbnail_data)/1024:.1f} KB)")
 
             # 📊 Calculate thumbnail size (for profiling)
             from io import BytesIO
@@ -528,9 +657,11 @@ class CC_PhotoThumbnail(QFrame):
 
         except Exception as e:
             logger.error(f"Failed to load thumbnail for {self.image_path.name}: {e}")
-            pixmap = QPixmap(210, 210)
+            size = CC_PhotoThumbnail._thumbnail_size
+            pixmap = QPixmap(size, size)
             pixmap.fill(QColor(245, 245, 245))
-            self.thumbnail_label.setPixmap(pixmap)
+            rounded_pixmap = self._apply_rounded_corners(pixmap)
+            self._set_pixmap(rounded_pixmap)
 
 
 # =============================================================================
@@ -560,6 +691,7 @@ class CC_MainWindow(QMainWindow):
         self.current_mask: Optional[np.ndarray] = None
         self.dark_mode: bool = False  # Light mode by default
         self._scan_workers: List[FolderScanWorker] = []  # Background scan workers
+        self._selected_widget = None  # Track currently selected thumbnail (macOS Photos style)
 
         # ⚠️ TEMPORARY: Disable FolderWatcher to focus on UI rendering performance
         # TODO: Re-enable after UI performance is optimized
@@ -842,6 +974,38 @@ class CC_MainWindow(QMainWindow):
         self.photo_header.setStyleSheet("font-size: 16px; font-weight: bold;")
         header_layout.addWidget(self.photo_header)
         header_layout.addStretch()
+
+        # macOS Photos style zoom slider
+        from PySide6.QtWidgets import QSlider
+        zoom_label = QLabel("Zoom:")
+        zoom_label.setStyleSheet("font-size: 11px; color: #666;")
+        header_layout.addWidget(zoom_label)
+
+        self.zoom_slider = QSlider(Qt.Horizontal)
+        self.zoom_slider.setMinimum(100)  # Min thumbnail size: 100px (tiny grid)
+        self.zoom_slider.setMaximum(400)  # Max thumbnail size: 400px (large detail view)
+        self.zoom_slider.setValue(200)    # Default: 200px
+        self.zoom_slider.setFixedWidth(120)
+        self.zoom_slider.setStyleSheet("""
+            QSlider::groove:horizontal {
+                border: 1px solid #bbb;
+                background: #f0f0f0;
+                height: 4px;
+                border-radius: 2px;
+            }
+            QSlider::handle:horizontal {
+                background: #007AFF;
+                border: 1px solid #006FE8;
+                width: 14px;
+                margin: -6px 0;
+                border-radius: 7px;
+            }
+            QSlider::handle:horizontal:hover {
+                background: #0062D1;
+            }
+        """)
+        self.zoom_slider.valueChanged.connect(self._on_zoom_changed)
+        header_layout.addWidget(self.zoom_slider)
 
         add_btn = QPushButton("+ Add Photos")
         add_btn.clicked.connect(self._add_photos)
@@ -1614,6 +1778,34 @@ class CC_MainWindow(QMainWindow):
         logger.info(f"⚠️ Loading cancelled by user ({loaded} photos loaded)")
         self._hide_loading_controls()
 
+    def _on_zoom_changed(self, value: int):
+        """Handle zoom slider changes - macOS Photos style dynamic zoom"""
+        logger.info(f"🔍 Zoom changed to {value}px")
+
+        # Update class variable for new thumbnails
+        CC_PhotoThumbnail._thumbnail_size = value
+
+        # Clear selected widget reference since grid will be recreated
+        self._selected_widget = None
+
+        # Update column count based on size (more columns for smaller thumbnails)
+        if value <= 120:
+            self.photo_grid_widget.cols = 6      # Tiny: 100-120px
+        elif value <= 160:
+            self.photo_grid_widget.cols = 5      # Small: 121-160px
+        elif value <= 220:
+            self.photo_grid_widget.cols = 4      # Medium: 161-220px
+        elif value <= 300:
+            self.photo_grid_widget.cols = 3      # Large: 221-300px
+        else:
+            self.photo_grid_widget.cols = 2      # Extra Large: 301-400px
+
+        # Reload the current view with new size
+        if hasattr(self, 'current_album_id') and self.current_album_id is not None:
+            photos = self.db.get_album_photos(self.current_album_id)
+            photo_paths = [Path(p['file_path']) for p in photos]
+            self.photo_grid_widget.set_photos(photo_paths)
+
     def _add_photos(self):
         """Add photos to current album"""
         file_filter = "Images (*.jpg *.jpeg *.png"
@@ -1650,6 +1842,25 @@ class CC_MainWindow(QMainWindow):
 
     def _select_photo(self, photo_path: Path):
         """Select a photo and load existing analysis if available"""
+        # Clear previous selection (macOS Photos style)
+        if hasattr(self, '_selected_widget') and self._selected_widget:
+            try:
+                # Widget might have been deleted after zoom change
+                self._selected_widget.set_selected(False)
+            except RuntimeError:
+                # Widget was deleted (e.g., after zoom change), ignore
+                pass
+
+        # Find and mark the new selected widget
+        for i in range(self.photo_grid_widget.layout.count()):
+            item = self.photo_grid_widget.layout.itemAt(i)
+            if item and item.widget():
+                widget = item.widget()
+                if hasattr(widget, 'image_path') and widget.image_path == photo_path:
+                    widget.set_selected(True)
+                    self._selected_widget = widget
+                    break
+
         self.current_photo = photo_path
         self.current_photo_label.setText(f"Selected:\n{str(photo_path)}")
         self.current_photo_label.setToolTip(str(photo_path))
