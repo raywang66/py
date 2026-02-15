@@ -87,6 +87,7 @@ from io import BytesIO
 from cc_config import CC_PROJECT_NAME, CC_VERSION
 from CC_SkinProcessor import CC_SkinProcessor, MEDIAPIPE_AVAILABLE, RAWPY_AVAILABLE
 from CC_Database import CC_Database
+from CC_Settings import CC_Settings
 
 
 logger = logging.getLogger("CC_MainApp")
@@ -674,6 +675,10 @@ class CC_MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
+        # Initialize settings manager
+        self.settings = CC_Settings()
+        logger.info("📋 Settings manager initialized")
+
         # Initialize components
         if not MEDIAPIPE_AVAILABLE:
             QMessageBox.critical(self, "Missing Dependency",
@@ -689,7 +694,11 @@ class CC_MainWindow(QMainWindow):
         self.point_cloud: Optional[np.ndarray] = None
         self.current_photo_rgb: Optional[np.ndarray] = None
         self.current_mask: Optional[np.ndarray] = None
-        self.dark_mode: bool = False  # Light mode by default
+
+        # Load saved dark mode preference
+        self.dark_mode: bool = self.settings.get_dark_mode()
+        logger.info(f"🎨 Restored dark mode: {self.dark_mode}")
+
         self._scan_workers: List[FolderScanWorker] = []  # Background scan workers
         self._selected_widget = None  # Track currently selected thumbnail (macOS Photos style)
 
@@ -720,16 +729,30 @@ class CC_MainWindow(QMainWindow):
 
         # UI Setup
         self.setWindowTitle(f"{CC_PROJECT_NAME} v{CC_VERSION}")
-        self.setGeometry(100, 100, 1600, 900)
+
+        # Restore window geometry from settings
+        geom = self.settings.get_window_geometry()
+        self.setGeometry(geom['x'], geom['y'], geom['width'], geom['height'])
+        if geom['maximized']:
+            self.showMaximized()
+        logger.info(f"🪟 Restored window: {geom['width']}x{geom['height']} at ({geom['x']}, {geom['y']})")
+
         self.setMinimumSize(1200, 700)
 
         self._apply_theme()
         self._create_menu()
+
+        # Update theme menu text based on current mode
+        self.theme_action.setText("☀️ Light Mode" if self.dark_mode else "🌙 Dark Mode")
+
         self._create_ui()
         self._load_navigator()
 
         # Restore folder monitoring for existing folder albums
         self._restore_folder_monitoring()
+
+        # Restore last navigation state
+        self._restore_navigation_state()
 
         logger.info("ChromaCloud GUI initialized")
 
@@ -791,17 +814,40 @@ class CC_MainWindow(QMainWindow):
                     color: #ffffff;
                 }
                 QProgressBar::chunk { background-color: #0a84ff; border-radius: 3px; }
+                QScrollArea {
+                    background-color: #000000;
+                    border: none;
+                }
                 QScrollBar:vertical {
                     background: #000000;
                     width: 12px;
                     margin: 0px;
+                    border: none;
                 }
                 QScrollBar::handle:vertical {
-                    background: #3a3a3c;
+                    background: #b0b0b0;
                     border-radius: 6px;
                     min-height: 20px;
                 }
-                QScrollBar::handle:vertical:hover { background: #4a4a4c; }
+                QScrollBar::handle:vertical:hover { background: #c0c0c0; }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                    height: 0px;
+                }
+                QScrollBar:horizontal {
+                    background: #000000;
+                    height: 12px;
+                    margin: 0px;
+                    border: none;
+                }
+                QScrollBar::handle:horizontal {
+                    background: #b0b0b0;
+                    border-radius: 6px;
+                    min-width: 20px;
+                }
+                QScrollBar::handle:horizontal:hover { background: #c0c0c0; }
+                QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                    width: 0px;
+                }
             """)
         else:
             # Light Mode
@@ -858,9 +904,10 @@ class CC_MainWindow(QMainWindow):
                 }
                 QProgressBar::chunk { background-color: #007aff; border-radius: 3px; }
                 QScrollBar:vertical {
-                    background: #ffffff;
+                    background: #f5f5f5;
                     width: 12px;
                     margin: 0px;
+                    border: none;
                 }
                 QScrollBar::handle:vertical {
                     background: #c7c7cc;
@@ -868,9 +915,59 @@ class CC_MainWindow(QMainWindow):
                     min-height: 20px;
                 }
                 QScrollBar::handle:vertical:hover { background: #aeaeb2; }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                    height: 0px;
+                }
+                QScrollBar:horizontal {
+                    background: #f5f5f5;
+                    height: 12px;
+                    margin: 0px;
+                    border: none;
+                }
+                QScrollBar::handle:horizontal {
+                    background: #c7c7cc;
+                    border-radius: 6px;
+                    min-width: 20px;
+                }
+                QScrollBar::handle:horizontal:hover { background: #aeaeb2; }
+                QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                    width: 0px;
+                }
             """)
 
         self.setPalette(palette)
+
+        # Windows 11 specific: Set title bar color
+        try:
+            import platform
+            if platform.system() == "Windows":
+                # Use Windows API to set title bar color
+                from ctypes import windll, c_int, byref
+                hwnd = int(self.winId())
+
+                # DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+                # DWMWA_CAPTION_COLOR = 35
+                DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+                DWMWA_CAPTION_COLOR = 35
+
+                if self.dark_mode:
+                    # Enable dark mode for title bar
+                    value = c_int(1)
+                    windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, byref(value), 4)
+                    # Set caption color to black
+                    color = c_int(0x00000000)  # Black
+                    windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, byref(color), 4)
+                else:
+                    # Disable dark mode for title bar
+                    value = c_int(0)
+                    windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, byref(value), 4)
+                    # Reset caption color (use system default)
+                    color = c_int(0xFFFFFFFF)  # DWMWA_COLOR_DEFAULT
+                    windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, byref(color), 4)
+
+                logger.info(f"🪟 Windows title bar theme updated: {'Dark' if self.dark_mode else 'Light'}")
+        except Exception as e:
+            logger.debug(f"Could not set Windows title bar color: {e}")
 
     def _create_menu(self):
         """Create menu bar"""
@@ -883,6 +980,14 @@ class CC_MainWindow(QMainWindow):
         add_folder_album_action.setShortcut("Ctrl+Shift+O")
         add_folder_album_action.triggered.connect(self._add_folder_album)
         file_menu.addAction(add_folder_album_action)
+
+        file_menu.addSeparator()
+
+        # Manual save settings for debugging
+        save_settings_action = QAction("💾 Save Settings Now", self)
+        save_settings_action.setShortcut("Ctrl+S")
+        save_settings_action.triggered.connect(self._manual_save_settings)
+        file_menu.addAction(save_settings_action)
 
         file_menu.addSeparator()
 
@@ -903,6 +1008,46 @@ class CC_MainWindow(QMainWindow):
         self.dark_mode = not self.dark_mode
         self._apply_theme()
         self.theme_action.setText("☀️ Light Mode" if self.dark_mode else "🌙 Dark Mode")
+
+        # Save dark mode preference
+        self.settings.set_dark_mode(self.dark_mode)
+        logger.info(f"🎨 Dark mode toggled: {self.dark_mode}")
+
+    def _manual_save_settings(self):
+        """Manually save settings (for testing/debugging)"""
+        try:
+            logger.info("💾 Manual save triggered...")
+
+            # Save current window geometry
+            if self.isMaximized():
+                self.showNormal()
+                geom = self.geometry()
+                self.settings.set_window_geometry(
+                    geom.x(), geom.y(), geom.width(), geom.height(), maximized=True
+                )
+                self.showMaximized()  # Restore maximized state
+            else:
+                geom = self.geometry()
+                self.settings.set_window_geometry(
+                    geom.x(), geom.y(), geom.width(), geom.height(), maximized=False
+                )
+
+            # Save to file
+            self.settings.save()
+
+            # Show confirmation
+            self.statusBar().showMessage("✅ Settings saved successfully!", 3000)
+            logger.info("✅ Manual save completed")
+
+            # Show what was saved
+            logger.info(f"   Window: {geom.width()}x{geom.height()} at ({geom.x()}, {geom.y()})")
+            logger.info(f"   Dark mode: {self.dark_mode}")
+            logger.info(f"   Zoom: {CC_PhotoThumbnail._thumbnail_size}px")
+            logger.info(f"   Album: {self.current_album_id}")
+
+        except Exception as e:
+            logger.error(f"❌ Manual save failed: {e}", exc_info=True)
+            self.statusBar().showMessage(f"❌ Failed to save settings: {e}", 5000)
 
     def _create_ui(self):
         """Create main UI with 3-panel layout"""
@@ -984,7 +1129,13 @@ class CC_MainWindow(QMainWindow):
         self.zoom_slider = QSlider(Qt.Horizontal)
         self.zoom_slider.setMinimum(100)  # Min thumbnail size: 100px (tiny grid)
         self.zoom_slider.setMaximum(400)  # Max thumbnail size: 400px (large detail view)
-        self.zoom_slider.setValue(200)    # Default: 200px
+
+        # Restore saved zoom level
+        saved_zoom = self.settings.get_zoom_level()
+        self.zoom_slider.setValue(saved_zoom)
+        CC_PhotoThumbnail._thumbnail_size = saved_zoom  # Update class variable
+        logger.info(f"🔍 Restored zoom level: {saved_zoom}px")
+
         self.zoom_slider.setFixedWidth(120)
         self.zoom_slider.setStyleSheet("""
             QSlider::groove:horizontal {
@@ -1030,6 +1181,20 @@ class CC_MainWindow(QMainWindow):
         )
         self.photo_grid_widget.photo_clicked.connect(self._select_photo)
         self.photo_grid = self.photo_grid_widget  # Alias for compatibility
+
+        # Set initial column count based on restored zoom level
+        saved_zoom = self.settings.get_zoom_level()
+        if saved_zoom <= 120:
+            self.photo_grid_widget.cols = 6      # Tiny: 100-120px
+        elif saved_zoom <= 160:
+            self.photo_grid_widget.cols = 5      # Small: 121-160px
+        elif saved_zoom <= 220:
+            self.photo_grid_widget.cols = 4      # Medium: 161-220px
+        elif saved_zoom <= 300:
+            self.photo_grid_widget.cols = 3      # Large: 221-300px
+        else:
+            self.photo_grid_widget.cols = 2      # Extra Large: 301-400px
+        logger.info(f"📐 Set initial column count: {self.photo_grid_widget.cols} (zoom={saved_zoom}px)")
 
         scroll.setWidget(self.photo_grid_widget)
         layout.addWidget(scroll)
@@ -1544,13 +1709,25 @@ class CC_MainWindow(QMainWindow):
         elif data_type == 'folder':
             # Folder albums - show all photos in the entire folder
             self._load_album_photos(data['id'])
+            # Save navigation state
+            self.settings.set_selected_item_type('folder')
+            self.settings.set_last_album_id(data['id'])
         elif data_type == 'subfolder':
             # Subfolder - show only photos in this specific subfolder
             self._load_subfolder_photos(data['album_id'], data['folder_path'])
+            # Save navigation state (use parent album)
+            self.settings.set_selected_item_type('folder')
+            self.settings.set_last_album_id(data['album_id'])
         elif data_type == 'album':
             self._load_album_photos(data['id'])
+            # Save navigation state
+            self.settings.set_selected_item_type('album')
+            self.settings.set_last_album_id(data['id'])
         elif data_type == 'all_photos':
             self._load_all_photos()
+            # Save navigation state
+            self.settings.set_selected_item_type('all_photos')
+            self.settings.set_last_album_id(None)
 
     def _load_album_photos(self, album_id: int):
         """Load photos from an album"""
@@ -1785,6 +1962,9 @@ class CC_MainWindow(QMainWindow):
         # Update class variable for new thumbnails
         CC_PhotoThumbnail._thumbnail_size = value
 
+        # Save zoom level to settings
+        self.settings.set_zoom_level(value)
+
         # Clear selected widget reference since grid will be recreated
         self._selected_widget = None
 
@@ -1838,7 +2018,11 @@ class CC_MainWindow(QMainWindow):
         else:
             self._load_all_photos()
 
+        # Reload navigator and preserve selection
+        saved_album_id = self.current_album_id
         self._load_navigator()
+        if saved_album_id:
+            self._find_and_select_album(saved_album_id)
 
     def _select_photo(self, photo_path: Path):
         """Select a photo and load existing analysis if available"""
@@ -2305,6 +2489,76 @@ class CC_MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Failed to restore folder monitoring: {e}", exc_info=True)
 
+    def _restore_navigation_state(self):
+        """Restore last navigation state (selected album/folder)"""
+        try:
+            item_type = self.settings.get_selected_item_type()
+            last_album_id = self.settings.get_last_album_id()
+
+            if not item_type:
+                # No saved state, load all photos by default
+                logger.info("📍 No saved navigation state, loading all photos")
+                self._load_all_photos()
+                return
+
+            logger.info(f"📍 Restoring navigation: type={item_type}, album_id={last_album_id}")
+
+            if item_type == 'all_photos':
+                # Select "All Photos"
+                self._load_all_photos()
+                # Select the tree item
+                root = self.nav_tree.invisibleRootItem()
+                if root.childCount() > 0:
+                    all_photos_item = root.child(0)
+                    self.nav_tree.setCurrentItem(all_photos_item)
+
+            elif item_type in ['album', 'folder'] and last_album_id:
+                # Find and select the album/folder
+                self._find_and_select_album(last_album_id)
+                # Load its photos
+                self._load_album_photos(last_album_id)
+
+            else:
+                # Fallback
+                logger.warning("Invalid navigation state, loading all photos")
+                self._load_all_photos()
+
+        except Exception as e:
+            logger.error(f"Failed to restore navigation state: {e}")
+            # Fallback to all photos
+            self._load_all_photos()
+
+    def _find_and_select_album(self, album_id: int):
+        """Find and select an album in the navigation tree"""
+        def search_item(item):
+            # Check current item
+            data = item.data(0, Qt.UserRole)
+            if data and data.get('id') == album_id:
+                return item
+
+            # Search children
+            for i in range(item.childCount()):
+                result = search_item(item.child(i))
+                if result:
+                    return result
+            return None
+
+        # Search from root
+        root = self.nav_tree.invisibleRootItem()
+        for i in range(root.childCount()):
+            found = search_item(root.child(i))
+            if found:
+                self.nav_tree.setCurrentItem(found)
+                # Expand parents
+                parent = found.parent()
+                while parent:
+                    parent.setExpanded(True)
+                    parent = parent.parent()
+                logger.info(f"✅ Selected album {album_id} in navigator")
+                return
+
+        logger.warning(f"⚠️ Album {album_id} not found in navigator")
+
     def _add_folder_album(self):
         """创建一个监控文件夹的 Album"""
         folder = QFileDialog.getExistingDirectory(
@@ -2352,7 +2606,11 @@ class CC_MainWindow(QMainWindow):
                 logger.info("ℹ️  Photos will be loaded from database only")
 
             # 刷新 UI
+            saved_album_id = self.current_album_id
             self._load_navigator()
+            # Select the newly created folder album
+            self._find_and_select_album(album_id)
+            self.current_album_id = album_id
 
             logger.info(f"Created folder album: {album_name} -> {folder_path}")
 
@@ -2409,8 +2667,15 @@ class CC_MainWindow(QMainWindow):
             logger.info(f"[_on_new_photos] Refreshing album photos for album {album_id}")
             self._load_album_photos(album_id)
 
+        # 刷新 navigator，但保存和恢复当前选择
         logger.info("[_on_new_photos] Refreshing navigator")
+        saved_album_id = self.current_album_id
         self._load_navigator()
+
+        # 恢复选择
+        if saved_album_id:
+            logger.info(f"[_on_new_photos] Restoring selection to album {saved_album_id}")
+            self._find_and_select_album(saved_album_id)
 
     def _on_photos_removed(self, paths: List[Path]):
         """处理被删除的照片"""
@@ -2823,6 +3088,52 @@ class CC_Visualization3DWindow(QWidget):
             # Update render
             self._update_render()
 
+    def closeEvent(self, event):
+        """Handle application close event - save all settings"""
+        logger.info("🚪 Application closeEvent triggered")
+
+        try:
+            # Save window geometry
+            logger.info("💾 Saving window geometry...")
+            if self.isMaximized():
+                # Get geometry before maximizing
+                self.showNormal()
+                geom = self.geometry()
+                self.settings.set_window_geometry(
+                    geom.x(), geom.y(), geom.width(), geom.height(), maximized=True
+                )
+                logger.info(f"   Window was maximized, saved geometry: {geom.width()}x{geom.height()}")
+            else:
+                geom = self.geometry()
+                self.settings.set_window_geometry(
+                    geom.x(), geom.y(), geom.width(), geom.height(), maximized=False
+                )
+                logger.info(f"   Saved window geometry: {geom.width()}x{geom.height()} at ({geom.x()}, {geom.y()})")
+
+            # Save all settings to file
+            logger.info("💾 Writing settings to file...")
+            self.settings.save()
+            logger.info("✅ Settings saved successfully")
+
+            # Stop auto-analyzer
+            logger.info("Stopping auto-analyzer...")
+            if hasattr(self, 'auto_analyzer') and self.auto_analyzer:
+                self.auto_analyzer.stop()
+                self.auto_analyzer.wait(1000)  # Wait up to 1 second
+
+            # Stop all folder watchers
+            logger.info("Stopping folder watchers...")
+            for album_id, watcher in self.folder_watchers.items():
+                watcher.stop_watching()
+                watcher.wait(500)  # Wait up to 0.5 seconds per watcher
+
+            logger.info("👋 Application closing gracefully")
+
+        except Exception as e:
+            logger.error(f"❌ Error during close: {e}", exc_info=True)
+
+        event.accept()
+
 
 # =============================================================================
 # Main Entry Point
@@ -2837,6 +3148,33 @@ def main():
     app.setFont(font)
 
     window = CC_MainWindow()
+
+    # Connect aboutToQuit to ensure settings are saved
+    # This catches the case when user clicks X to close
+    def save_on_quit():
+        logger.info("🚪 Application aboutToQuit signal - saving settings...")
+        try:
+            # Save window geometry
+            if window.isMaximized():
+                window.showNormal()
+                geom = window.geometry()
+                window.settings.set_window_geometry(
+                    geom.x(), geom.y(), geom.width(), geom.height(), maximized=True
+                )
+            else:
+                geom = window.geometry()
+                window.settings.set_window_geometry(
+                    geom.x(), geom.y(), geom.width(), geom.height(), maximized=False
+                )
+
+            # Save to file
+            window.settings.save()
+            logger.info("✅ Settings saved via aboutToQuit")
+        except Exception as e:
+            logger.error(f"❌ Failed to save on quit: {e}")
+
+    app.aboutToQuit.connect(save_on_quit)
+
     window.show()
 
     sys.exit(app.exec())
