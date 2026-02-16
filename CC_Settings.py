@@ -31,6 +31,15 @@ class CC_Settings:
                 with open(self.settings_file, 'r', encoding='utf-8') as f:
                     self.settings = json.load(f)
                 logger.info(f"✅ Loaded settings from {self.settings_file}")
+
+                # Migrate old dark_mode to new appearance_mode
+                if 'ui' in self.settings and 'dark_mode' in self.settings['ui']:
+                    dark_mode = self.settings['ui'].pop('dark_mode')
+                    if 'appearance_mode' not in self.settings['ui']:
+                        # Convert: dark_mode=True -> 'dark', dark_mode=False -> 'light'
+                        self.settings['ui']['appearance_mode'] = 'dark' if dark_mode else 'light'
+                        logger.info(f"🔄 Migrated dark_mode={dark_mode} to appearance_mode={self.settings['ui']['appearance_mode']}")
+                        self.save()  # Save migrated settings
             else:
                 logger.info("No existing settings file, using defaults")
                 self.settings = self._get_defaults()
@@ -49,7 +58,7 @@ class CC_Settings:
                 'maximized': False
             },
             'ui': {
-                'dark_mode': False,
+                'appearance_mode': 'system',  # 'system', 'light', 'dark'
                 'zoom_level': 200  # Default thumbnail size
             },
             'navigation': {
@@ -84,15 +93,15 @@ class CC_Settings:
         }
 
     # UI settings
-    def get_dark_mode(self) -> bool:
-        """Get dark mode preference"""
-        return self.settings.get('ui', {}).get('dark_mode', False)
+    def get_appearance_mode(self) -> str:
+        """Get appearance mode: 'system', 'light', or 'dark'"""
+        return self.settings.get('ui', {}).get('appearance_mode', 'system')
 
-    def set_dark_mode(self, enabled: bool):
-        """Save dark mode preference"""
+    def set_appearance_mode(self, mode: str):
+        """Set appearance mode: 'system', 'light', or 'dark'"""
         if 'ui' not in self.settings:
             self.settings['ui'] = {}
-        self.settings['ui']['dark_mode'] = enabled
+        self.settings['ui']['appearance_mode'] = mode
 
     def get_zoom_level(self) -> int:
         """Get zoom level (thumbnail size)"""

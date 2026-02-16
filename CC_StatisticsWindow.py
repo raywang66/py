@@ -36,9 +36,25 @@ logger = logging.getLogger("CC_Statistics")
 class MplCanvas(FigureCanvasQTAgg):
     """Matplotlib canvas for embedding in Qt"""
 
-    def __init__(self, parent=None, width=8, height=6, dpi=100):
-        fig = Figure(figsize=(width, height), dpi=dpi, facecolor='white')
-        self.axes = fig.add_subplot(111)
+    def __init__(self, parent=None, width=8, height=6, dpi=100, is_dark=False):
+        # Set colors based on theme
+        facecolor = '#0a0a0a' if is_dark else 'white'
+        text_color = 'white' if is_dark else 'black'
+        grid_color = '#2c2c2c' if is_dark else '#e5e5e5'
+
+        fig = Figure(figsize=(width, height), dpi=dpi, facecolor=facecolor)
+        self.axes = fig.add_subplot(111, facecolor=facecolor)
+
+        # Set text colors for dark mode
+        if is_dark:
+            self.axes.tick_params(colors=text_color, which='both')
+            self.axes.xaxis.label.set_color(text_color)
+            self.axes.yaxis.label.set_color(text_color)
+            self.axes.title.set_color(text_color)
+            # Set spine colors
+            for spine in self.axes.spines.values():
+                spine.set_edgecolor(grid_color)
+
         super().__init__(fig)
         self.setParent(parent)
 
@@ -46,82 +62,224 @@ class MplCanvas(FigureCanvasQTAgg):
 class CC_StatisticsWindow(QWidget):
     """Advanced statistics window with multiple visualizations"""
 
-    def __init__(self, album_name: str, stats_data: List[Dict]):
+    def __init__(self, album_name: str, stats_data: List[Dict], is_dark: bool = False):
         super().__init__()
         self.album_name = album_name
         self.stats_data = stats_data
+        self.is_dark = is_dark
 
         self.setWindowTitle(f"Statistics - {album_name}")
         self.setGeometry(100, 100, 1400, 900)
 
-        # Apply clean white theme
+        # Apply theme based on mode
         self._apply_theme()
         self._create_ui()
         self._plot_all_charts()
 
-        logger.info(f"Statistics window created for album: {album_name}")
+        # Set Windows 11 title bar color to match theme
+        self._update_windows_title_bar()
+
+        logger.info(f"Statistics window created for album: {album_name} (Dark mode: {is_dark})")
 
     def _apply_theme(self):
-        """Apply clean white theme (macOS Photos style)"""
-        self.setStyleSheet("""
-            QWidget {
-                background-color: white;
-                color: #333333;
-                font-family: -apple-system, "Segoe UI", sans-serif;
-            }
-            QTabWidget::pane {
-                border: 1px solid #DDDDDD;
-                background-color: white;
-            }
-            QTabBar::tab {
-                background-color: #F5F5F5;
-                color: #333333;
-                padding: 8px 20px;
-                border: 1px solid #DDDDDD;
-                border-bottom: none;
-                border-top-left-radius: 4px;
-                border-top-right-radius: 4px;
-            }
-            QTabBar::tab:selected {
-                background-color: white;
-                color: #007AFF;
-                font-weight: 600;
-            }
-            QTabBar::tab:hover {
-                background-color: #EEEEEE;
-            }
-            QPushButton {
-                background-color: #007AFF;
-                color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-weight: 500;
-            }
-            QPushButton:hover {
-                background-color: #0051D5;
-            }
-            QPushButton:pressed {
-                background-color: #003D99;
-            }
-            QGroupBox {
-                border: 1px solid #DDDDDD;
-                border-radius: 6px;
-                margin-top: 12px;
-                padding-top: 12px;
-                background-color: #FAFAFA;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px;
-                color: #333333;
-                font-weight: 600;
-            }
-            QLabel {
-                color: #333333;
-            }
-        """)
+        """Apply theme (Light or Dark mode) matching main window"""
+        if self.is_dark:
+            # Dark Mode - macOS Photos style
+            self.setStyleSheet("""
+                QWidget {
+                    background-color: #000000;
+                    color: #ffffff;
+                    font-family: -apple-system, "Segoe UI", sans-serif;
+                }
+                QTabWidget::pane {
+                    border: 1px solid #2c2c2c;
+                    background-color: #000000;
+                }
+                QTabBar::tab {
+                    background-color: #1c1c1c;
+                    color: #ffffff;
+                    padding: 8px 20px;
+                    border: 1px solid #2c2c2c;
+                    border-bottom: none;
+                    border-top-left-radius: 4px;
+                    border-top-right-radius: 4px;
+                }
+                QTabBar::tab:selected {
+                    background-color: #000000;
+                    color: #0a84ff;
+                    font-weight: 600;
+                }
+                QTabBar::tab:hover {
+                    background-color: #2c2c2c;
+                }
+                QPushButton {
+                    background-color: #0a84ff;
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 8px 16px;
+                    font-weight: 500;
+                }
+                QPushButton:hover {
+                    background-color: #0066cc;
+                }
+                QPushButton:pressed {
+                    background-color: #004999;
+                }
+                QGroupBox {
+                    border: 1px solid #2c2c2c;
+                    border-radius: 6px;
+                    margin-top: 12px;
+                    padding-top: 12px;
+                    background-color: #0a0a0a;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    left: 10px;
+                    padding: 0 5px;
+                    color: #ffffff;
+                    font-weight: 600;
+                }
+                QLabel {
+                    color: #ffffff;
+                }
+                QScrollArea {
+                    background-color: #000000;
+                    border: none;
+                }
+            """)
+        else:
+            # Light Mode - macOS Photos style
+            self.setStyleSheet("""
+                QWidget {
+                    background-color: white;
+                    color: #333333;
+                    font-family: -apple-system, "Segoe UI", sans-serif;
+                }
+                QTabWidget::pane {
+                    border: 1px solid #DDDDDD;
+                    background-color: white;
+                }
+                QTabBar::tab {
+                    background-color: #F5F5F5;
+                    color: #333333;
+                    padding: 8px 20px;
+                    border: 1px solid #DDDDDD;
+                    border-bottom: none;
+                    border-top-left-radius: 4px;
+                    border-top-right-radius: 4px;
+                }
+                QTabBar::tab:selected {
+                    background-color: white;
+                    color: #007AFF;
+                    font-weight: 600;
+                }
+                QTabBar::tab:hover {
+                    background-color: #EEEEEE;
+                }
+                QPushButton {
+                    background-color: #007AFF;
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 8px 16px;
+                    font-weight: 500;
+                }
+                QPushButton:hover {
+                    background-color: #0051D5;
+                }
+                QPushButton:pressed {
+                    background-color: #003D99;
+                }
+                QGroupBox {
+                    border: 1px solid #DDDDDD;
+                    border-radius: 6px;
+                    margin-top: 12px;
+                    padding-top: 12px;
+                    background-color: #FAFAFA;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    left: 10px;
+                    padding: 0 5px;
+                    color: #333333;
+                    font-weight: 600;
+                }
+                QLabel {
+                    color: #333333;
+                }
+            """)
+
+    def _get_plot_bg_color(self):
+        """Get plot background color based on theme"""
+        return '#0a0a0a' if self.is_dark else '#FAFAFA'
+
+    def _get_text_color(self):
+        """Get text color based on theme"""
+        return '#ffffff' if self.is_dark else '#333333'
+
+    def _get_grid_color(self):
+        """Get grid color based on theme"""
+        return '#2c2c2c' if self.is_dark else '#DDDDDD'
+
+    def _apply_plot_theme(self, ax):
+        """Apply dark/light theme colors to matplotlib axes"""
+        if self.is_dark:
+            # Dark mode colors
+            text_color = 'white'
+            grid_color = '#2c2c2c'
+
+            # Set axis labels color
+            ax.xaxis.label.set_color(text_color)
+            ax.yaxis.label.set_color(text_color)
+
+            # Set title color
+            ax.title.set_color(text_color)
+
+            # Set tick labels color
+            ax.tick_params(colors=text_color, which='both')
+
+            # Set spine colors
+            for spine in ax.spines.values():
+                spine.set_edgecolor(grid_color)
+
+            # Set legend colors if legend exists
+            legend = ax.get_legend()
+            if legend:
+                legend.get_frame().set_facecolor('#1c1c1c')
+                legend.get_frame().set_edgecolor(grid_color)
+                for text in legend.get_texts():
+                    text.set_color(text_color)
+
+    def _update_windows_title_bar(self):
+        """Update Windows 11 title bar to match theme"""
+        try:
+            import platform
+            if platform.system() == "Windows":
+                from ctypes import windll, c_int, byref
+                hwnd = int(self.winId())
+
+                DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+                DWMWA_CAPTION_COLOR = 35
+
+                if self.is_dark:
+                    # Enable dark mode for title bar
+                    value = c_int(1)
+                    windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, byref(value), 4)
+                    # Set caption color to black
+                    color = c_int(0x00000000)
+                    windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, byref(color), 4)
+                else:
+                    # Disable dark mode for title bar
+                    value = c_int(0)
+                    windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, byref(value), 4)
+                    # Reset caption color (use system default)
+                    color = c_int(0xFFFFFFFF)
+                    windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, byref(color), 4)
+
+                logger.info(f"🪟 Statistics Window title bar theme updated: {'Dark' if self.is_dark else 'Light'}")
+        except Exception as e:
+            logger.debug(f"Could not set Windows title bar color: {e}")
 
     def _create_ui(self):
         """Create the UI layout"""
@@ -282,7 +440,7 @@ class CC_StatisticsWindow(QWidget):
         """Plot hue distribution histogram"""
         layout = parent_tab.layout()
 
-        canvas = MplCanvas(parent_tab, width=10, height=6)
+        canvas = MplCanvas(parent_tab, width=10, height=6, is_dark=self.is_dark)
         toolbar = NavigationToolbar2QT(canvas, parent_tab)
 
         # Plot histogram
@@ -292,7 +450,7 @@ class CC_StatisticsWindow(QWidget):
         ax.set_ylabel('Number of Photos', fontsize=12, weight='bold')
         ax.set_title('Hue Distribution Across Album', fontsize=14, weight='bold', pad=20)
         ax.grid(True, alpha=0.3, linestyle='--')
-        ax.set_facecolor('#FAFAFA')
+        ax.set_facecolor(self._get_plot_bg_color())
 
         # Add statistics annotations
         mean_hue = np.mean(hues)
@@ -300,6 +458,9 @@ class CC_StatisticsWindow(QWidget):
         ax.axvline(mean_hue, color='red', linestyle='--', linewidth=2, label=f'Mean: {mean_hue:.1f}°')
         ax.axvline(median_hue, color='green', linestyle='--', linewidth=2, label=f'Median: {median_hue:.1f}°')
         ax.legend(fontsize=10)
+
+        # Apply dark/light theme colors
+        self._apply_plot_theme(ax)
 
         canvas.figure.tight_layout()
 
@@ -339,7 +500,7 @@ class CC_StatisticsWindow(QWidget):
         ax.set_ylabel('Saturation (%)', fontsize=11, weight='bold')
         ax.set_zlabel('Lightness (%)', fontsize=11, weight='bold')
         ax.set_title('3D HSL Distribution', fontsize=14, weight='bold', pad=20)
-        ax.set_facecolor('#FAFAFA')
+        ax.set_facecolor(self._get_plot_bg_color())
 
         canvas.figure.tight_layout()
 
@@ -422,7 +583,7 @@ class CC_StatisticsWindow(QWidget):
 
         # Adjust canvas size based on number of photos
         width = max(12, len(photo_names) * 0.3)
-        canvas = MplCanvas(parent_tab, width=width, height=6)
+        canvas = MplCanvas(parent_tab, width=width, height=6, is_dark=self.is_dark)
         toolbar = NavigationToolbar2QT(canvas, parent_tab)
 
         ax = canvas.axes
@@ -446,7 +607,7 @@ class CC_StatisticsWindow(QWidget):
         ax.set_xticklabels(photo_names, rotation=60, ha='right', fontsize=8)
         ax.legend(loc='upper right', fontsize=10)
         ax.grid(True, alpha=0.3, linestyle='--', axis='y')
-        ax.set_facecolor('#FAFAFA')
+        ax.set_facecolor(self._get_plot_bg_color())
         ax.set_ylim(0, 105)  # Slightly more than 100 for visibility
 
         # Add interactive hover tooltip with photo preview
@@ -796,7 +957,7 @@ class CC_StatisticsWindow(QWidget):
 
         # Adjust canvas size based on number of photos
         width = max(12, len(photo_names) * 0.3)
-        canvas = MplCanvas(parent_tab, width=width, height=6)
+        canvas = MplCanvas(parent_tab, width=width, height=6, is_dark=self.is_dark)
         toolbar = NavigationToolbar2QT(canvas, parent_tab)
 
         ax = canvas.axes
@@ -836,8 +997,11 @@ class CC_StatisticsWindow(QWidget):
         ax.set_xticklabels(photo_names, rotation=60, ha='right', fontsize=8)
         ax.legend(loc='upper right', fontsize=9, ncol=2)
         ax.grid(True, alpha=0.3, linestyle='--', axis='y')
-        ax.set_facecolor('#FAFAFA')
+        ax.set_facecolor(self._get_plot_bg_color())
         ax.set_ylim(0, 105)  # Slightly more than 100 for visibility
+
+        # Apply dark/light theme colors
+        self._apply_plot_theme(ax)
 
         # Add interactive hover tooltip with photo preview
         self._add_hover_tooltip(canvas, ax, x, photo_names, photo_paths,
@@ -931,7 +1095,7 @@ class CC_StatisticsWindow(QWidget):
 
         # Adjust canvas size based on number of photos
         width = max(12, len(photo_names) * 0.3)
-        canvas = MplCanvas(parent_tab, width=width, height=6)
+        canvas = MplCanvas(parent_tab, width=width, height=6, is_dark=self.is_dark)
         toolbar = NavigationToolbar2QT(canvas, parent_tab)
 
         ax = canvas.axes
@@ -967,7 +1131,7 @@ class CC_StatisticsWindow(QWidget):
         ax.set_xticklabels(photo_names, rotation=60, ha='right', fontsize=8)
         ax.legend(loc='upper right', fontsize=10)
         ax.grid(True, alpha=0.3, linestyle='--', axis='y')
-        ax.set_facecolor('#FAFAFA')
+        ax.set_facecolor(self._get_plot_bg_color())
         ax.set_ylim(0, 105)
 
         # Add interactive hover tooltip with photo preview

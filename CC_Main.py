@@ -72,7 +72,7 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem, QInputDialog, QMenu, QFrame
 )
 from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QPixmap, QImage, QPalette, QColor, QAction, QFont
+from PySide6.QtGui import QPixmap, QImage, QPalette, QColor, QAction, QActionGroup, QFont
 
 import numpy as np
 from PIL import Image
@@ -696,8 +696,8 @@ class CC_MainWindow(QMainWindow):
         self.current_mask: Optional[np.ndarray] = None
 
         # Load saved dark mode preference
-        self.dark_mode: bool = self.settings.get_dark_mode()
-        logger.info(f"🎨 Restored dark mode: {self.dark_mode}")
+        self.appearance_mode: str = self.settings.get_appearance_mode()  # 'system', 'light', 'dark'
+        logger.info(f"🎨 Restored appearance mode: {self.appearance_mode}")
 
         self._scan_workers: List[FolderScanWorker] = []  # Background scan workers
         self._selected_widget = None  # Track currently selected thumbnail (macOS Photos style)
@@ -743,7 +743,7 @@ class CC_MainWindow(QMainWindow):
         self._create_menu()
 
         # Update theme menu text based on current mode
-        self.theme_action.setText("☀️ Light Mode" if self.dark_mode else "🌙 Dark Mode")
+        self._update_theme_menu_text()
 
         self._create_ui()
         self._load_navigator()
@@ -757,23 +757,44 @@ class CC_MainWindow(QMainWindow):
         logger.info("ChromaCloud GUI initialized")
 
     def _apply_theme(self):
-        """Apply macOS Photos-like theme (Light or Dark mode)"""
-        palette = QPalette()
+        """Apply macOS Photos-like theme using Qt native palettes"""
+        # Determine which mode to use
+        if self.appearance_mode == 'system':
+            # Detect system theme
+            is_dark = self._is_system_dark_mode()
+        elif self.appearance_mode == 'dark':
+            is_dark = True
+        else:  # 'light'
+            is_dark = False
 
-        if self.dark_mode:
-            # Dark Mode
+        # Use Qt's style palette as base
+        app = QApplication.instance()
+
+        if is_dark:
+            # Set dark palette
+            app.setStyle("Fusion")  # Fusion style works best for dark mode
+            palette = QPalette()
+
+            # Dark color scheme
             bg_color = QColor(0, 0, 0)
             text_color = QColor(255, 255, 255)
+            base_color = QColor(18, 18, 18)
+            button_color = QColor(48, 48, 48)
             accent_blue = QColor(10, 132, 255)
 
             palette.setColor(QPalette.Window, bg_color)
             palette.setColor(QPalette.WindowText, text_color)
-            palette.setColor(QPalette.Base, QColor(18, 18, 18))
+            palette.setColor(QPalette.Base, base_color)
+            palette.setColor(QPalette.AlternateBase, QColor(30, 30, 30))
             palette.setColor(QPalette.Text, text_color)
-            palette.setColor(QPalette.Button, QColor(48, 48, 48))
+            palette.setColor(QPalette.Button, button_color)
             palette.setColor(QPalette.ButtonText, text_color)
             palette.setColor(QPalette.Highlight, accent_blue)
             palette.setColor(QPalette.HighlightedText, text_color)
+            palette.setColor(QPalette.Link, accent_blue)
+            palette.setColor(QPalette.LinkVisited, QColor(154, 110, 255))
+
+            app.setPalette(palette)
 
             self.setStyleSheet("""
                 QMainWindow { background-color: #000000; }
@@ -850,19 +871,30 @@ class CC_MainWindow(QMainWindow):
                 }
             """)
         else:
-            # Light Mode
+            # Set light palette
+            app.setStyle("Fusion")
+            palette = QPalette()
+
+            # Light color scheme
             bg_color = QColor(255, 255, 255)
             text_color = QColor(0, 0, 0)
+            base_color = QColor(250, 250, 250)
+            button_color = QColor(248, 248, 248)
             accent_blue = QColor(0, 122, 255)
 
             palette.setColor(QPalette.Window, bg_color)
             palette.setColor(QPalette.WindowText, text_color)
-            palette.setColor(QPalette.Base, QColor(250, 250, 250))
+            palette.setColor(QPalette.Base, base_color)
+            palette.setColor(QPalette.AlternateBase, QColor(245, 245, 245))
             palette.setColor(QPalette.Text, text_color)
-            palette.setColor(QPalette.Button, QColor(248, 248, 248))
+            palette.setColor(QPalette.Button, button_color)
             palette.setColor(QPalette.ButtonText, text_color)
             palette.setColor(QPalette.Highlight, accent_blue)
             palette.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
+            palette.setColor(QPalette.Link, accent_blue)
+            palette.setColor(QPalette.LinkVisited, QColor(130, 90, 255))
+
+            app.setPalette(palette)
 
             self.setStyleSheet("""
                 QMainWindow { background-color: #ffffff; }
@@ -935,37 +967,76 @@ class CC_MainWindow(QMainWindow):
                 }
             """)
 
-        self.setPalette(palette)
-
         # Windows 11 specific: Set title bar color
+        self._update_windows_title_bar(is_dark)
+
+    def _is_system_dark_mode(self) -> bool:
+        """Detect if system is in dark mode"""
         try:
             import platform
             if platform.system() == "Windows":
-                # Use Windows API to set title bar color
+                # Check Windows registry for dark mode
+                import winreg
+                try:
+                    key = winreg.OpenKey(
+                        winreg.HKEY_CURRENT_USER,
+                        r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+                    )
+                    value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+                    winreg.CloseKey(key)
+                    return value == 0  # 0 = Dark mode, 1 = Light mode
+                except:
+                    return False
+            elif platform.system() == "Darwin":  # macOS
+                # Use defaults command to check macOS dark mode
+                import subprocess
+                result = subprocess.run(
+                    ["defaults", "read", "-g", "AppleInterfaceStyle"],
+                    capture_output=True,
+                    text=True
+                )
+                return "Dark" in result.stdout
+            else:
+                return False
+        except:
+            return False
+
+    def _is_current_theme_dark(self) -> bool:
+        """Get current effective dark mode state (considering system mode)"""
+        if self.appearance_mode == 'system':
+            return self._is_system_dark_mode()
+        elif self.appearance_mode == 'dark':
+            return True
+        else:  # 'light'
+            return False
+
+    def _update_windows_title_bar(self, is_dark: bool):
+        """Update Windows 11 title bar to match theme"""
+        try:
+            import platform
+            if platform.system() == "Windows":
                 from ctypes import windll, c_int, byref
                 hwnd = int(self.winId())
 
-                # DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-                # DWMWA_CAPTION_COLOR = 35
                 DWMWA_USE_IMMERSIVE_DARK_MODE = 20
                 DWMWA_CAPTION_COLOR = 35
 
-                if self.dark_mode:
+                if is_dark:
                     # Enable dark mode for title bar
                     value = c_int(1)
                     windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, byref(value), 4)
                     # Set caption color to black
-                    color = c_int(0x00000000)  # Black
+                    color = c_int(0x00000000)
                     windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, byref(color), 4)
                 else:
                     # Disable dark mode for title bar
                     value = c_int(0)
                     windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, byref(value), 4)
                     # Reset caption color (use system default)
-                    color = c_int(0xFFFFFFFF)  # DWMWA_COLOR_DEFAULT
+                    color = c_int(0xFFFFFFFF)
                     windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, byref(color), 4)
 
-                logger.info(f"🪟 Windows title bar theme updated: {'Dark' if self.dark_mode else 'Light'}")
+                logger.info(f"🪟 Windows title bar theme updated: {'Dark' if is_dark else 'Light'}")
         except Exception as e:
             logger.debug(f"Could not set Windows title bar color: {e}")
 
@@ -999,19 +1070,42 @@ class CC_MainWindow(QMainWindow):
         # View menu
         view_menu = menubar.addMenu("View")
 
-        self.theme_action = QAction("🌙 Dark Mode", self)
-        self.theme_action.triggered.connect(self._toggle_theme)
-        view_menu.addAction(self.theme_action)
+        # Appearance submenu
+        appearance_menu = view_menu.addMenu("🎨 Appearance")
 
-    def _toggle_theme(self):
-        """Toggle between Light and Dark mode"""
-        self.dark_mode = not self.dark_mode
+        self.appearance_group = QActionGroup(self)
+        self.appearance_group.setExclusive(True)
+
+        self.system_mode_action = QAction("💻 Follow System", self, checkable=True)
+        self.system_mode_action.triggered.connect(lambda: self._set_appearance_mode('system'))
+        self.appearance_group.addAction(self.system_mode_action)
+        appearance_menu.addAction(self.system_mode_action)
+
+        self.light_mode_action = QAction("☀️ Light", self, checkable=True)
+        self.light_mode_action.triggered.connect(lambda: self._set_appearance_mode('light'))
+        self.appearance_group.addAction(self.light_mode_action)
+        appearance_menu.addAction(self.light_mode_action)
+
+        self.dark_mode_action = QAction("🌙 Dark", self, checkable=True)
+        self.dark_mode_action.triggered.connect(lambda: self._set_appearance_mode('dark'))
+        self.appearance_group.addAction(self.dark_mode_action)
+        appearance_menu.addAction(self.dark_mode_action)
+
+    def _update_theme_menu_text(self):
+        """Update which appearance mode is checked"""
+        if self.appearance_mode == 'system':
+            self.system_mode_action.setChecked(True)
+        elif self.appearance_mode == 'light':
+            self.light_mode_action.setChecked(True)
+        else:  # 'dark'
+            self.dark_mode_action.setChecked(True)
+
+    def _set_appearance_mode(self, mode: str):
+        """Set appearance mode: 'system', 'light', or 'dark'"""
+        self.appearance_mode = mode
         self._apply_theme()
-        self.theme_action.setText("☀️ Light Mode" if self.dark_mode else "🌙 Dark Mode")
-
-        # Save dark mode preference
-        self.settings.set_dark_mode(self.dark_mode)
-        logger.info(f"🎨 Dark mode toggled: {self.dark_mode}")
+        self.settings.set_appearance_mode(mode)
+        logger.info(f"🎨 Appearance mode set to: {mode}")
 
     def _manual_save_settings(self):
         """Manually save settings (for testing/debugging)"""
@@ -1041,7 +1135,7 @@ class CC_MainWindow(QMainWindow):
 
             # Show what was saved
             logger.info(f"   Window: {geom.width()}x{geom.height()} at ({geom.x()}, {geom.y()})")
-            logger.info(f"   Dark mode: {self.dark_mode}")
+            logger.info(f"   Appearance: {self.appearance_mode}")
             logger.info(f"   Zoom: {CC_PhotoThumbnail._thumbnail_size}px")
             logger.info(f"   Album: {self.current_album_id}")
 
@@ -2401,8 +2495,11 @@ class CC_MainWindow(QMainWindow):
 
         logger.info(f"Retrieved {len(detailed_stats)} records from database")
 
+        # Determine current theme state
+        is_dark = self._is_current_theme_dark()
+
         from CC_StatisticsWindow import CC_StatisticsWindow
-        stats_window = CC_StatisticsWindow(data['name'], detailed_stats)
+        stats_window = CC_StatisticsWindow(data['name'], detailed_stats, is_dark=is_dark)
         stats_window.show()
         self.stats_window = stats_window
 
