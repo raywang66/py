@@ -92,6 +92,10 @@ class CC_FolderWatcher(QThread):
 
             for file_path in self.folder_path.rglob('*'):
                 if file_path.is_file() and file_path.suffix in self.image_extensions:
+                    # Skip AppleDouble and metadata files
+                    if should_skip_file(file_path):
+                        logger.debug(f"[FolderWatcher] Skipping metadata file: {file_path.name}")
+                        continue
                     all_photos.append(file_path)
 
                 processed += 1
