@@ -461,6 +461,36 @@ class CC_PhotoThumbnail(QFrame):
         if self.is_selected:
             self._update_selection_overlay()
 
+    def _add_offline_indicator(self, pixmap: QPixmap) -> QPixmap:
+        """Add a small offline indicator badge to the thumbnail"""
+        from PySide6.QtGui import QPainter, QFont, QPen
+        from PySide6.QtCore import Qt as QtCore
+
+        # Create a copy to draw on
+        result = QPixmap(pixmap)
+        painter = QPainter(result)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Draw a small "offline" badge in bottom-right corner
+        badge_size = 20
+        margin = 5
+        x = result.width() - badge_size - margin
+        y = result.height() - badge_size - margin
+
+        # Semi-transparent dark background
+        painter.setBrush(QColor(0, 0, 0, 180))
+        painter.setPen(QPen(QColor(255, 255, 255, 100), 1))
+        painter.drawRoundedRect(x, y, badge_size, badge_size, 3, 3)
+
+        # Draw offline icon (📴 or ⚠)
+        painter.setPen(QColor(255, 200, 0))  # Amber color
+        font = QFont("Segoe UI", 10)
+        painter.setFont(font)
+        painter.drawText(x, y, badge_size, badge_size, QtCore.AlignCenter, "📴")
+
+        painter.end()
+        return result
+
     def _show_placeholder(self):
         """Show placeholder while loading"""
         size = CC_PhotoThumbnail._thumbnail_size
@@ -502,17 +532,36 @@ class CC_PhotoThumbnail(QFrame):
         display_size = CC_PhotoThumbnail._thumbnail_size
 
         try:
-            # ⚡️ STEP 1: Try to load from database cache
-            if self.db and self.image_path.exists():
-                file_mtime = self.image_path.stat().st_mtime
+            # ⚡️ STEP 1: Try to load from database cache (works offline!)
+            if self.db:
                 cache = self.db.get_thumbnail_cache(str(self.image_path))
 
-                if cache and cache['photo_mtime'] == file_mtime:
+                # Check if we should use cached thumbnail
+                use_cache = False
+                cache_reason = ""
+
+                if cache:
+                    if self.image_path.exists():
+                        # File exists - verify it hasn't been modified
+                        file_mtime = self.image_path.stat().st_mtime
+                        if cache['photo_mtime'] == file_mtime:
+                            use_cache = True
+                            cache_reason = "verified"
+                        else:
+                            cache_reason = "outdated"
+                            logger.debug(f"Cache outdated: {self.image_path.name}")
+                    else:
+                        # File doesn't exist (offline) - use cached thumbnail anyway!
+                        use_cache = True
+                        cache_reason = "offline"
+                        logger.debug(f"📴 OFFLINE mode: {self.image_path.name} (using cached thumbnail)")
+
+                if use_cache:
                     # Cache hit! Load from database (fast!)
                     from io import BytesIO
                     img = Image.open(BytesIO(cache['thumbnail_data']))
                     cache_hit = True
-                    logger.debug(f"Cache HIT: {self.image_path.name}")
+                    logger.debug(f"Cache HIT ({cache_reason}): {self.image_path.name}")
 
                     # Update access time for LRU
                     self.db.update_thumbnail_access_time(str(self.image_path))
@@ -535,6 +584,12 @@ class CC_PhotoThumbnail(QFrame):
 
                     # Apply rounded corners - macOS Photos style (dynamic radius)
                     rounded_pixmap = self._apply_rounded_corners(pixmap)
+
+                    # Add visual indicator for offline mode
+                    if cache_reason == "offline":
+                        # Add a small "offline" badge to the thumbnail
+                        rounded_pixmap = self._add_offline_indicator(rounded_pixmap)
+
                     self._set_pixmap(rounded_pixmap)
 
                     # Track statistics
@@ -549,6 +604,11 @@ class CC_PhotoThumbnail(QFrame):
                     return  # Done!
 
             # ⚡️ STEP 2: Cache miss - generate thumbnail at MAX size
+            # Check if file exists before attempting to read
+            if not self.image_path.exists():
+                logger.warning(f"📴 File not found and no cache: {self.image_path.name}")
+                raise FileNotFoundError(f"File not accessible: {self.image_path}")
+
             logger.debug(f"Cache MISS: {self.image_path.name} - generating at {MAX_THUMBNAIL_SIZE}px...")
 
             # Fast path: try to use embedded thumbnail for JPEG
@@ -656,6 +716,10 @@ class CC_PhotoThumbnail(QFrame):
                     'size': thumbnail_size
                 })
 
+        except FileNotFoundError:
+            # File doesn't exist and no cache available
+            logger.warning(f"📴 File not found (offline?): {self.image_path.name}")
+            self._show_offline_placeholder()
         except Exception as e:
             logger.error(f"Failed to load thumbnail for {self.image_path.name}: {e}")
             size = CC_PhotoThumbnail._thumbnail_size
@@ -663,6 +727,35 @@ class CC_PhotoThumbnail(QFrame):
             pixmap.fill(QColor(245, 245, 245))
             rounded_pixmap = self._apply_rounded_corners(pixmap)
             self._set_pixmap(rounded_pixmap)
+
+    def _show_offline_placeholder(self):
+        """Show placeholder for offline (unavailable) files"""
+        size = CC_PhotoThumbnail._thumbnail_size
+        pixmap = QPixmap(size, size)
+        pixmap.fill(QColor(240, 240, 240))
+
+        from PySide6.QtGui import QPainter, QFont
+        from PySide6.QtCore import Qt as QtCore
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Draw offline icon
+        painter.setPen(QColor(150, 150, 150))
+        font = QFont("Segoe UI", max(24, int(size * 0.15)))
+        painter.setFont(font)
+        painter.drawText(pixmap.rect(), QtCore.AlignCenter, "📴")
+
+        # Draw text below
+        font_small = QFont("Segoe UI", max(8, int(size * 0.05)))
+        painter.setFont(font_small)
+        text_rect = pixmap.rect()
+        text_rect.setTop(int(size * 0.65))
+        painter.drawText(text_rect, QtCore.AlignCenter, "Offline")
+
+        painter.end()
+
+        rounded_pixmap = self._apply_rounded_corners(pixmap)
+        self._set_pixmap(rounded_pixmap)
 
 
 # =============================================================================
