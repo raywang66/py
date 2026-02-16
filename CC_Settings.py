@@ -104,14 +104,24 @@ class CC_Settings:
         self.settings['ui']['appearance_mode'] = mode
 
     def get_zoom_level(self) -> int:
-        """Get zoom level (thumbnail size)"""
+        """Get zoom level (thumbnail size) - deprecated, kept for compatibility"""
         return self.settings.get('ui', {}).get('zoom_level', 200)
 
     def set_zoom_level(self, zoom: int):
-        """Save zoom level"""
+        """Save zoom level - deprecated, kept for compatibility"""
         if 'ui' not in self.settings:
             self.settings['ui'] = {}
         self.settings['ui']['zoom_level'] = zoom
+
+    def get_zoom_level_index(self) -> int:
+        """Get zoom level index (0-3) for 4-level zoom: 3,5,7,9 columns"""
+        return self.settings.get('ui', {}).get('zoom_level_index', 1)  # Default to level 1 (5 cols)
+
+    def set_zoom_level_index(self, index: int):
+        """Save zoom level index (0-3)"""
+        if 'ui' not in self.settings:
+            self.settings['ui'] = {}
+        self.settings['ui']['zoom_level_index'] = index
 
     # Navigation settings
     def get_last_album_id(self) -> Optional[int]:

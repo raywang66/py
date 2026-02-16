@@ -203,10 +203,38 @@ class SimpleVirtualPhotoGrid(QWidget):
         self.cols = 3
         self.widgets_created = 0
         self._loading_cancelled = False
+        self._min_thumbnail_size = 100  # Minimum thumbnail size before stopping resize
 
         self.layout = QGridLayout(self)
         self.layout.setSpacing(3)  # Very tight spacing - macOS Photos style at max zoom
         self.layout.setContentsMargins(0, 0, 0, 0)
+
+    def resizeEvent(self, event):
+        """Handle resize - adjust thumbnail size to fit column count in available width"""
+        super().resizeEvent(event)
+
+        if not hasattr(self, 'thumbnail_class') or self.thumbnail_class is None:
+            return
+
+        # Calculate thumbnail size based on available width and current column count
+        available_width = self.width()
+        spacing = self.layout.spacing()
+        margin = 10  # Layout margins
+
+        # Calculate thumbnail size: (width - margins) / cols - spacing
+        thumbnail_size = int((available_width - margin * 2) / self.cols - spacing * 2)
+
+        # Apply min/max constraints
+        thumbnail_size = max(80, min(500, thumbnail_size))
+
+        # Update class variable for thumbnail size
+        if hasattr(self.thumbnail_class, '_thumbnail_size'):
+            old_size = self.thumbnail_class._thumbnail_size
+            if abs(old_size - thumbnail_size) > 10:  # Only update if change is significant
+                logger.info(f"📐 Window resized: recalculating thumbnail size {old_size}px → {thumbnail_size}px for {self.cols} cols")
+                self.thumbnail_class._thumbnail_size = thumbnail_size
+                # Update existing thumbnails
+                self._update_thumbnail_sizes(thumbnail_size)
 
     def count(self):
         """Return number of widgets (for compatibility)"""
@@ -327,3 +355,16 @@ class SimpleVirtualPhotoGrid(QWidget):
     def addWidget(self, widget, row, col):
         """Add widget to grid (for compatibility)"""
         self.layout.addWidget(widget, row, col)
+
+    def _update_thumbnail_sizes(self, new_size: int):
+        """Update size of all existing thumbnail widgets"""
+        for i in range(self.layout.count()):
+            item = self.layout.itemAt(i)
+            if item and item.widget():
+                widget = item.widget()
+                if hasattr(widget, 'setFixedSize'):
+                    widget.setFixedSize(new_size, new_size)
+                    # Reload thumbnail at new size if it has the method
+                    if hasattr(widget, '_load_thumbnail'):
+                        widget._load_thumbnail()
+

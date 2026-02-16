@@ -869,6 +869,28 @@ class CC_MainWindow(QMainWindow):
                 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
                     width: 0px;
                 }
+                /* Zoom buttons - compact square style for dark mode */
+                QPushButton[zoom_button="true"] {
+                    font-size: 18px;
+                    font-weight: bold;
+                    background-color: #3c3c3c;
+                    border: 1px solid #505050;
+                    border-radius: 5px;
+                    padding: 0px;
+                    color: #ffffff;
+                }
+                QPushButton[zoom_button="true"]:hover {
+                    background-color: #505050;
+                    border-color: #0a84ff;
+                }
+                QPushButton[zoom_button="true"]:pressed {
+                    background-color: #2c2c2c;
+                }
+                QPushButton[zoom_button="true"]:disabled {
+                    background-color: #2c2c2c;
+                    border-color: #3c3c3c;
+                    color: #666666;
+                }
             """)
         else:
             # Set light palette
@@ -964,6 +986,28 @@ class CC_MainWindow(QMainWindow):
                 QScrollBar::handle:horizontal:hover { background: #aeaeb2; }
                 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
                     width: 0px;
+                }
+                /* Zoom buttons - compact square style for light mode */
+                QPushButton[zoom_button="true"] {
+                    font-size: 18px;
+                    font-weight: bold;
+                    background-color: #f0f0f0;
+                    border: 1px solid #d0d0d0;
+                    border-radius: 5px;
+                    padding: 0px;
+                    color: #000000;
+                }
+                QPushButton[zoom_button="true"]:hover {
+                    background-color: #e8e8e8;
+                    border-color: #007aff;
+                }
+                QPushButton[zoom_button="true"]:pressed {
+                    background-color: #d8d8d8;
+                }
+                QPushButton[zoom_button="true"]:disabled {
+                    background-color: #f8f8f8;
+                    border-color: #e5e5e5;
+                    color: #999999;
                 }
             """)
 
@@ -1214,43 +1258,32 @@ class CC_MainWindow(QMainWindow):
         header_layout.addWidget(self.photo_header)
         header_layout.addStretch()
 
-        # macOS Photos style zoom slider
-        from PySide6.QtWidgets import QSlider
-        zoom_label = QLabel("Zoom:")
-        zoom_label.setStyleSheet("font-size: 11px; color: #666;")
-        header_layout.addWidget(zoom_label)
+        # macOS Photos style zoom buttons: 4 levels (3, 5, 7, 9 columns)
+        # Level 0 = 3 cols (largest photos), Level 3 = 9 cols (smallest photos)
+        self.zoom_levels = [3, 5, 7, 9]  # Column counts from large to small
 
-        self.zoom_slider = QSlider(Qt.Horizontal)
-        self.zoom_slider.setMinimum(100)  # Min thumbnail size: 100px (tiny grid)
-        self.zoom_slider.setMaximum(400)  # Max thumbnail size: 400px (large detail view)
+        # Restore saved zoom level (default to level 1 = 5 columns)
+        saved_zoom_level = self.settings.get_zoom_level_index()  # 0-3
+        if not 0 <= saved_zoom_level < len(self.zoom_levels):
+            saved_zoom_level = 1  # Default to 5 columns (level 1)
+        self.current_zoom_level = saved_zoom_level
+        logger.info(f"🔍 Restored zoom level: {self.current_zoom_level} ({self.zoom_levels[self.current_zoom_level]} cols)")
 
-        # Restore saved zoom level
-        saved_zoom = self.settings.get_zoom_level()
-        self.zoom_slider.setValue(saved_zoom)
-        CC_PhotoThumbnail._thumbnail_size = saved_zoom  # Update class variable
-        logger.info(f"🔍 Restored zoom level: {saved_zoom}px")
+        # Zoom out button (−) - LEFT button, makes photos SMALLER (more columns)
+        self.zoom_out_btn = QPushButton("−")
+        self.zoom_out_btn.setFixedSize(30, 30)
+        self.zoom_out_btn.setProperty("zoom_button", True)  # Mark for theme styling
+        self.zoom_out_btn.clicked.connect(self._zoom_out)
+        self.zoom_out_btn.setEnabled(self.current_zoom_level < len(self.zoom_levels) - 1)
+        header_layout.addWidget(self.zoom_out_btn)
 
-        self.zoom_slider.setFixedWidth(120)
-        self.zoom_slider.setStyleSheet("""
-            QSlider::groove:horizontal {
-                border: 1px solid #bbb;
-                background: #f0f0f0;
-                height: 4px;
-                border-radius: 2px;
-            }
-            QSlider::handle:horizontal {
-                background: #007AFF;
-                border: 1px solid #006FE8;
-                width: 14px;
-                margin: -6px 0;
-                border-radius: 7px;
-            }
-            QSlider::handle:horizontal:hover {
-                background: #0062D1;
-            }
-        """)
-        self.zoom_slider.valueChanged.connect(self._on_zoom_changed)
-        header_layout.addWidget(self.zoom_slider)
+        # Zoom in button (+) - RIGHT button, makes photos LARGER (fewer columns)
+        self.zoom_in_btn = QPushButton("+")
+        self.zoom_in_btn.setFixedSize(30, 30)
+        self.zoom_in_btn.setProperty("zoom_button", True)  # Mark for theme styling
+        self.zoom_in_btn.clicked.connect(self._zoom_in)
+        self.zoom_in_btn.setEnabled(self.current_zoom_level > 0)
+        header_layout.addWidget(self.zoom_in_btn)
 
         add_btn = QPushButton("+ Add Photos")
         add_btn.clicked.connect(self._add_photos)
@@ -1277,18 +1310,21 @@ class CC_MainWindow(QMainWindow):
         self.photo_grid = self.photo_grid_widget  # Alias for compatibility
 
         # Set initial column count based on restored zoom level
-        saved_zoom = self.settings.get_zoom_level()
-        if saved_zoom <= 120:
-            self.photo_grid_widget.cols = 6      # Tiny: 100-120px
-        elif saved_zoom <= 160:
-            self.photo_grid_widget.cols = 5      # Small: 121-160px
-        elif saved_zoom <= 220:
-            self.photo_grid_widget.cols = 4      # Medium: 161-220px
-        elif saved_zoom <= 300:
-            self.photo_grid_widget.cols = 3      # Large: 221-300px
-        else:
-            self.photo_grid_widget.cols = 2      # Extra Large: 301-400px
-        logger.info(f"📐 Set initial column count: {self.photo_grid_widget.cols} (zoom={saved_zoom}px)")
+        self.photo_grid_widget.cols = self.zoom_levels[self.current_zoom_level]
+
+        # Calculate initial thumbnail size
+        # Use a default width estimate since window is not yet shown
+        default_gallery_width = 1200  # Reasonable default
+        spacing = 3
+        margin = 10
+        initial_cols = self.zoom_levels[self.current_zoom_level]
+        initial_thumbnail_size = int((default_gallery_width - margin * 2) / initial_cols - spacing * 2)
+        initial_thumbnail_size = max(80, min(500, initial_thumbnail_size))
+
+        # Set initial thumbnail size
+        CC_PhotoThumbnail._thumbnail_size = initial_thumbnail_size
+
+        logger.info(f"📐 Set initial: {self.photo_grid_widget.cols} columns @ {initial_thumbnail_size}px")
 
         scroll.setWidget(self.photo_grid_widget)
         layout.addWidget(scroll)
@@ -1886,6 +1922,9 @@ class CC_MainWindow(QMainWindow):
         # Filter out AppleDouble and metadata files
         photo_paths = [p for p in photo_paths if not should_skip_file(p)]
 
+        # Save current photos for zoom reload
+        self._current_photos = photo_paths
+
         total_count = len(photo_paths)
 
         if total_count == 0:
@@ -2049,36 +2088,63 @@ class CC_MainWindow(QMainWindow):
         logger.info(f"⚠️ Loading cancelled by user ({loaded} photos loaded)")
         self._hide_loading_controls()
 
-    def _on_zoom_changed(self, value: int):
-        """Handle zoom slider changes - macOS Photos style dynamic zoom"""
-        logger.info(f"🔍 Zoom changed to {value}px")
+    def _zoom_in(self):
+        """Zoom in - decrease column count (larger thumbnails)"""
+        if self.current_zoom_level > 0:
+            self.current_zoom_level -= 1
+            self._apply_zoom()
 
-        # Update class variable for new thumbnails
-        CC_PhotoThumbnail._thumbnail_size = value
+    def _zoom_out(self):
+        """Zoom out - increase column count (smaller thumbnails)"""
+        if self.current_zoom_level < len(self.zoom_levels) - 1:
+            self.current_zoom_level += 1
+            self._apply_zoom()
+
+    def _apply_zoom(self):
+        """Apply current zoom level"""
+        cols = self.zoom_levels[self.current_zoom_level]
+        logger.info(f"🔍 Zoom changed to level {self.current_zoom_level} ({cols} columns)")
+
+        # Calculate thumbnail size based on available width and column count
+        # Get the gallery width (photo_grid_widget's parent scroll area)
+        available_width = self.photo_grid_widget.width()
+        if available_width < 100:  # Not initialized yet, use default
+            available_width = 1200  # Default width estimate
+
+        # Calculate thumbnail size to fit the columns
+        spacing = 3  # Grid spacing from CC_VirtualPhotoGrid
+        margin = 10  # Margins
+
+        # Formula: (width - margins) / cols - spacing
+        thumbnail_size = int((available_width - margin * 2) / cols - spacing * 2)
+
+        # Apply min/max constraints
+        thumbnail_size = max(80, min(500, thumbnail_size))  # Between 80px and 500px
+
+        logger.info(f"📐 Calculated thumbnail size: {thumbnail_size}px for {cols} columns (width={available_width}px)")
+
+        # Update thumbnail size class variable
+        CC_PhotoThumbnail._thumbnail_size = thumbnail_size
+
+        # Update button states
+        self.zoom_in_btn.setEnabled(self.current_zoom_level > 0)
+        self.zoom_out_btn.setEnabled(self.current_zoom_level < len(self.zoom_levels) - 1)
 
         # Save zoom level to settings
-        self.settings.set_zoom_level(value)
+        self.settings.set_zoom_level_index(self.current_zoom_level)
 
         # Clear selected widget reference since grid will be recreated
         self._selected_widget = None
 
-        # Update column count based on size (more columns for smaller thumbnails)
-        if value <= 120:
-            self.photo_grid_widget.cols = 6      # Tiny: 100-120px
-        elif value <= 160:
-            self.photo_grid_widget.cols = 5      # Small: 121-160px
-        elif value <= 220:
-            self.photo_grid_widget.cols = 4      # Medium: 161-220px
-        elif value <= 300:
-            self.photo_grid_widget.cols = 3      # Large: 221-300px
-        else:
-            self.photo_grid_widget.cols = 2      # Extra Large: 301-400px
+        # Update column count
+        self.photo_grid_widget.cols = cols
 
-        # Reload the current view with new size
-        if hasattr(self, 'current_album_id') and self.current_album_id is not None:
-            photos = self.db.get_album_photos(self.current_album_id)
-            photo_paths = [Path(p['file_path']) for p in photos]
-            self.photo_grid_widget.set_photos(photo_paths)
+        # Reload the current view with new column count and thumbnail size
+        if hasattr(self, '_current_photos') and self._current_photos:
+            logger.info(f"🔄 Reloading {len(self._current_photos)} photos with {cols} columns @ {thumbnail_size}px each")
+            self.photo_grid_widget.set_photos(self._current_photos)
+        else:
+            logger.warning("⚠️ No photos to reload for zoom change")
 
     def _add_photos(self):
         """Add photos to current album"""
