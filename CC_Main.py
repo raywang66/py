@@ -64,6 +64,7 @@ if sys.stdout.encoding != 'utf-8':
 import time
 from typing import Optional, List
 import pickle
+from ctypes import c_void_p
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -1148,7 +1149,7 @@ class CC_MainWindow(QMainWindow):
             return False
 
     def _update_windows_title_bar(self, is_dark: bool):
-        """Update Windows 11 title bar to match theme"""
+        """Update title bar to match theme (Windows 11 and macOS)"""
         try:
             import platform
             if platform.system() == "Windows":
@@ -1174,8 +1175,113 @@ class CC_MainWindow(QMainWindow):
                     windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, byref(color), 4)
 
                 logger.info(f"🪟 Windows title bar theme updated: {'Dark' if is_dark else 'Light'}")
+            elif platform.system() == "Darwin":
+                # macOS: Set NSWindow appearance using objc bridge
+                # Must be called AFTER window is shown
+                self._macos_title_bar_pending = is_dark
+                self._update_macos_title_bar()
         except Exception as e:
-            logger.debug(f"Could not set Windows title bar color: {e}")
+            logger.debug(f"Could not set title bar color: {e}")
+
+    def _update_macos_title_bar(self):
+        """Update macOS title bar appearance - called after window is shown"""
+        if not hasattr(self, '_macos_title_bar_pending'):
+            return
+
+        try:
+            import platform
+            if platform.system() != "Darwin":
+                return
+
+            is_dark = self._macos_title_bar_pending
+
+            # Method 1: Try using objc bridge (if pyobjc is available)
+            try:
+                import objc
+                from Foundation import NSObject
+                from AppKit import NSApp, NSAppearance
+
+                # Get the NSWindow
+                ns_view_ptr = int(self.winId())
+                ns_view = objc.objc_object(c_void_p=ns_view_ptr)
+                ns_window = ns_view.window()
+
+                if ns_window:
+                    if is_dark:
+                        appearance = NSAppearance.appearanceNamed_("NSAppearanceNameDarkAqua")
+                    else:
+                        appearance = NSAppearance.appearanceNamed_("NSAppearanceNameAqua")
+
+                    ns_window.setAppearance_(appearance)
+                    logger.info(f"🍎 macOS title bar updated via objc: {'Dark' if is_dark else 'Light'}")
+                    return
+            except ImportError:
+                logger.debug("pyobjc not available, trying ctypes method")
+            except Exception as e:
+                logger.debug(f"objc method failed: {e}")
+
+            # Method 2: Try using ctypes with Cocoa framework
+            try:
+                from ctypes import cdll, c_void_p, c_long
+                import ctypes.util
+
+                # Load AppKit framework
+                appkit_path = ctypes.util.find_library('AppKit')
+                if not appkit_path:
+                    raise Exception("AppKit framework not found")
+
+                appkit = cdll.LoadLibrary(appkit_path)
+                objc = cdll.LoadLibrary('/usr/lib/libobjc.dylib')
+
+                # Objective-C runtime functions
+                objc.objc_getClass.restype = c_void_p
+                objc.sel_registerName.restype = c_void_p
+                objc.objc_msgSend.restype = c_void_p
+                objc.objc_msgSend.argtypes = [c_void_p, c_void_p]
+
+                # Get NSView from Qt widget
+                ns_view_ptr = int(self.winId())
+
+                # Get window from view: [view window]
+                sel_window = objc.sel_registerName(b'window')
+                ns_window = objc.objc_msgSend(c_void_p(ns_view_ptr), sel_window)
+
+                if ns_window:
+                    # Get NSAppearance class
+                    ns_appearance_class = objc.objc_getClass(b'NSAppearance')
+
+                    # Get appearance name
+                    if is_dark:
+                        appearance_name = b'NSAppearanceNameDarkAqua'
+                    else:
+                        appearance_name = b'NSAppearanceNameAqua'
+
+                    # Create NSString for appearance name
+                    ns_string_class = objc.objc_getClass(b'NSString')
+                    sel_string_with_utf8 = objc.sel_registerName(b'stringWithUTF8String:')
+                    objc.objc_msgSend.argtypes = [c_void_p, c_void_p, c_void_p]
+                    appearance_name_str = objc.objc_msgSend(ns_string_class, sel_string_with_utf8, appearance_name)
+
+                    # Get appearance: [NSAppearance appearanceNamed:]
+                    sel_appearance_named = objc.sel_registerName(b'appearanceNamed:')
+                    objc.objc_msgSend.argtypes = [c_void_p, c_void_p, c_void_p]
+                    appearance = objc.objc_msgSend(ns_appearance_class, sel_appearance_named, appearance_name_str)
+
+                    # Set appearance: [window setAppearance:]
+                    sel_set_appearance = objc.sel_registerName(b'setAppearance:')
+                    objc.objc_msgSend.argtypes = [c_void_p, c_void_p, c_void_p]
+                    objc.objc_msgSend(ns_window, sel_set_appearance, appearance)
+
+                    logger.info(f"🍎 macOS title bar updated via ctypes: {'Dark' if is_dark else 'Light'}")
+                    return
+
+            except Exception as e:
+                logger.debug(f"ctypes method failed: {e}")
+
+            logger.warning("Could not update macOS title bar - neither pyobjc nor ctypes method worked")
+
+        except Exception as e:
+            logger.debug(f"macOS title bar update failed: {e}")
 
     def _create_menu(self):
         """Create menu bar"""
@@ -2658,7 +2764,7 @@ class CC_MainWindow(QMainWindow):
         is_dark = self._is_current_theme_dark()
 
         from CC_StatisticsWindow import CC_StatisticsWindow
-        stats_window = CC_StatisticsWindow(data['name'], detailed_stats, is_dark=is_dark)
+        stats_window = CC_StatisticsWindow(data['name'], detailed_stats, db=self.db, is_dark=is_dark)
         stats_window.show()
         self.stats_window = stats_window
 
@@ -3389,6 +3495,14 @@ class CC_Visualization3DWindow(QWidget):
             logger.error(f"❌ Error during close: {e}", exc_info=True)
 
         event.accept()
+
+    def showEvent(self, event):
+        """Handle window show event - update macOS title bar"""
+        super().showEvent(event)
+        # Update macOS title bar after window is shown (required for Cocoa)
+        import platform
+        if platform.system() == "Darwin":
+            self._update_macos_title_bar()
 
 
 # =============================================================================

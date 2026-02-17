@@ -1,0 +1,9 @@
+# ChromaCloud - macOS specific requirements
+# Install with: pip install -r requirements-macos.txt
+
+# macOS native window appearance support (dark mode title bar)
+pyobjc-framework-Cocoa>=9.0
+
+# Note: These packages are macOS-only and will fail on Windows/Linux
+# On other platforms, use requirements.txt instead
+

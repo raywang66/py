@@ -62,10 +62,11 @@ class MplCanvas(FigureCanvasQTAgg):
 class CC_StatisticsWindow(QWidget):
     """Advanced statistics window with multiple visualizations"""
 
-    def __init__(self, album_name: str, stats_data: List[Dict], is_dark: bool = False):
+    def __init__(self, album_name: str, stats_data: List[Dict], db=None, is_dark: bool = False):
         super().__init__()
         self.album_name = album_name
         self.stats_data = stats_data
+        self.db = db  # Database instance for thumbnail access
         self.is_dark = is_dark
 
         self.setWindowTitle(f"Statistics - {album_name}")
@@ -252,7 +253,7 @@ class CC_StatisticsWindow(QWidget):
                     text.set_color(text_color)
 
     def _update_windows_title_bar(self):
-        """Update Windows 11 title bar to match theme"""
+        """Update title bar to match theme (Windows 11 and macOS)"""
         try:
             import platform
             if platform.system() == "Windows":
@@ -278,8 +279,93 @@ class CC_StatisticsWindow(QWidget):
                     windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, byref(color), 4)
 
                 logger.info(f"🪟 Statistics Window title bar theme updated: {'Dark' if self.is_dark else 'Light'}")
+            elif platform.system() == "Darwin":
+                # macOS: Update title bar after window is shown
+                self._update_macos_title_bar()
         except Exception as e:
-            logger.debug(f"Could not set Windows title bar color: {e}")
+            logger.debug(f"Could not set title bar color: {e}")
+
+    def _update_macos_title_bar(self):
+        """Update macOS title bar appearance"""
+        try:
+            import platform
+            if platform.system() != "Darwin":
+                return
+
+            # Method 1: Try using objc bridge (if pyobjc is available)
+            try:
+                import objc
+                from ctypes import c_void_p
+                from Foundation import NSObject
+                from AppKit import NSApp, NSAppearance
+
+                # Get the NSWindow
+                ns_view_ptr = int(self.winId())
+                ns_view = objc.objc_object(c_void_p=ns_view_ptr)
+                ns_window = ns_view.window()
+
+                if ns_window:
+                    if self.is_dark:
+                        appearance = NSAppearance.appearanceNamed_("NSAppearanceNameDarkAqua")
+                    else:
+                        appearance = NSAppearance.appearanceNamed_("NSAppearanceNameAqua")
+
+                    ns_window.setAppearance_(appearance)
+                    logger.info(f"🍎 Statistics Window title bar updated: {'Dark' if self.is_dark else 'Light'}")
+                    return
+            except ImportError:
+                logger.debug("pyobjc not available for Statistics Window")
+            except Exception as e:
+                logger.debug(f"objc method failed: {e}")
+
+            # Method 2: ctypes fallback (same as main window)
+            try:
+                from ctypes import cdll, c_void_p
+                import ctypes.util
+
+                appkit_path = ctypes.util.find_library('AppKit')
+                if appkit_path:
+                    appkit = cdll.LoadLibrary(appkit_path)
+                    objc = cdll.LoadLibrary('/usr/lib/libobjc.dylib')
+
+                    objc.objc_getClass.restype = c_void_p
+                    objc.sel_registerName.restype = c_void_p
+                    objc.objc_msgSend.restype = c_void_p
+                    objc.objc_msgSend.argtypes = [c_void_p, c_void_p]
+
+                    ns_view_ptr = int(self.winId())
+                    sel_window = objc.sel_registerName(b'window')
+                    ns_window = objc.objc_msgSend(c_void_p(ns_view_ptr), sel_window)
+
+                    if ns_window:
+                        ns_appearance_class = objc.objc_getClass(b'NSAppearance')
+                        appearance_name = b'NSAppearanceNameDarkAqua' if self.is_dark else b'NSAppearanceNameAqua'
+
+                        ns_string_class = objc.objc_getClass(b'NSString')
+                        sel_string_with_utf8 = objc.sel_registerName(b'stringWithUTF8String:')
+                        objc.objc_msgSend.argtypes = [c_void_p, c_void_p, c_void_p]
+                        appearance_name_str = objc.objc_msgSend(ns_string_class, sel_string_with_utf8, appearance_name)
+
+                        sel_appearance_named = objc.sel_registerName(b'appearanceNamed:')
+                        appearance = objc.objc_msgSend(ns_appearance_class, sel_appearance_named, appearance_name_str)
+
+                        sel_set_appearance = objc.sel_registerName(b'setAppearance:')
+                        objc.objc_msgSend(ns_window, sel_set_appearance, appearance)
+
+                        logger.info(f"🍎 Statistics Window title bar updated (ctypes): {'Dark' if self.is_dark else 'Light'}")
+                        return
+            except Exception as e:
+                logger.debug(f"ctypes method failed: {e}")
+
+        except Exception as e:
+            logger.debug(f"macOS title bar update failed: {e}")
+
+    def showEvent(self, event):
+        """Handle window show event - update macOS title bar"""
+        super().showEvent(event)
+        import platform
+        if platform.system() == "Darwin":
+            self._update_macos_title_bar()
 
     def _create_ui(self):
         """Create the UI layout"""
@@ -308,29 +394,34 @@ class CC_StatisticsWindow(QWidget):
         # Tab widget for different chart types
         self.tabs = QTabWidget()
 
-        # Tab 1: Overview
-        self.overview_tab = self._create_overview_tab()
-        self.tabs.addTab(self.overview_tab, "📈 Overview")
-
-        # Tab 2: Hue Analysis
-        self.hue_tab = self._create_chart_tab()
-        self.tabs.addTab(self.hue_tab, "🎨 Hue Distribution")
-
-        # Tab 3: Hue Distribution Comparison (NEW)
+        # Most used tabs first - Comparison charts
+        # Tab 1: Hue Distribution Comparison (Most frequently used - set as default)
         self.hue_comparison_tab = self._create_chart_tab()
         self.tabs.addTab(self.hue_comparison_tab, "🌈 Hue Comparison")
 
-        # Tab 4: Saturation Distribution Comparison (NEW)
+        # Tab 2: Saturation Distribution Comparison
         self.saturation_comparison_tab = self._create_chart_tab()
         self.tabs.addTab(self.saturation_comparison_tab, "💧 Saturation Comparison")
 
-        # Tab 5: 3D Scatter
+        # Tab 3: Lightness Distribution Comparison
+        self.lightness_tab = self._create_chart_tab()
+        self.tabs.addTab(self.lightness_tab, "💡 Lightness Comparison")
+
+        # Additional analysis tabs
+        # Tab 4: Overview
+        self.overview_tab = self._create_overview_tab()
+        self.tabs.addTab(self.overview_tab, "📈 Overview")
+
+        # Tab 5: Hue Analysis (old style)
+        self.hue_tab = self._create_chart_tab()
+        self.tabs.addTab(self.hue_tab, "🎨 Hue Distribution")
+
+        # Tab 6: 3D Scatter
         self.scatter_tab = self._create_chart_tab()
         self.tabs.addTab(self.scatter_tab, "📊 HSL Scatter")
 
-        # Tab 6: Lightness Distribution
-        self.lightness_tab = self._create_chart_tab()
-        self.tabs.addTab(self.lightness_tab, "💡 Lightness Comparison")
+        # Set default tab to Hue Comparison (index 0)
+        self.tabs.setCurrentIndex(0)
 
         layout.addWidget(self.tabs)
 
@@ -684,8 +775,12 @@ class CC_StatisticsWindow(QWidget):
                         tooltip_widget.hide()
                         return
 
-                    # Load and display thumbnail (larger size for better face visibility)
+                    # Load and display thumbnail
+                    # Priority: 1) File if exists, 2) Database thumbnail, 3) Placeholder text
+                    pixmap = None
+
                     if path and Path(path).exists():
+                        # Photo file is accessible - load directly
                         img = Image.open(path)
                         img.thumbnail((250, 250), Image.Resampling.LANCZOS)
                         if img.mode != 'RGB':
@@ -697,9 +792,30 @@ class CC_StatisticsWindow(QWidget):
 
                         pixmap = QPixmap()
                         pixmap.loadFromData(buffer.read())
+                    elif self.db:
+                        # Photo file not accessible (USB offline) - try database thumbnail
+                        try:
+                            cached = self.db.get_thumbnail_cache(path)
+                            if cached and cached.get('thumbnail_data'):
+                                # Load thumbnail from database
+                                pixmap = QPixmap()
+                                if pixmap.loadFromData(cached['thumbnail_data']):
+                                    # Scale to desired size if needed
+                                    if pixmap.width() > 250 or pixmap.height() > 250:
+                                        pixmap = pixmap.scaled(250, 250, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                                    logger.debug(f"Loaded thumbnail from database for offline photo: {full_photo_name}")
+                                else:
+                                    pixmap = None
+                        except Exception as e:
+                            logger.debug(f"Could not load thumbnail from database: {e}")
+                            pixmap = None
+
+                    if pixmap:
                         photo_label.setPixmap(pixmap)
                     else:
-                        photo_label.setText(f"📷 {full_photo_name}")
+                        # No thumbnail available - show text
+                        status = "📷 (offline)" if not Path(path).exists() else "📷"
+                        photo_label.setText(f"{status} {full_photo_name}")
 
                     # Generate mini comparison charts (the other two dimensions)
                     chart_pixmap = self._generate_multi_dim_chart(photo_data, ax)
