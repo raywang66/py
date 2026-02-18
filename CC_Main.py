@@ -1935,32 +1935,93 @@ class CC_MainWindow(QMainWindow):
         if data_type in ['section', 'all_photos']:
             return
 
-        # Only show menu for albums and folders
-        if data_type not in ['album', 'folder']:
+        # Only show menu for albums, folders, and subfolders
+        if data_type not in ['album', 'folder', 'subfolder']:
             return
 
         menu = QMenu()
 
-        # Rename action (folders can't be renamed as they're tied to paths)
+        # Rename action (only for albums - folders and subfolders are tied to filesystem paths)
         if data_type == 'album':
             rename_action = QAction("Rename", self)
             rename_action.triggered.connect(lambda: self._rename_item(item, data))
             menu.addAction(rename_action)
 
-        # Delete action
-        delete_text = "Stop Monitoring && Delete" if data_type == 'folder' else "Delete"
-        delete_action = QAction(delete_text, self)
-        delete_action.triggered.connect(lambda: self._delete_item(item, data))
-        menu.addAction(delete_action)
+        # Delete action (not available for subfolders - they're part of the folder structure)
+        if data_type in ['album', 'folder']:
+            delete_text = "Stop Monitoring && Delete" if data_type == 'folder' else "Delete"
+            delete_action = QAction(delete_text, self)
+            delete_action.triggered.connect(lambda: self._delete_item(item, data))
+            menu.addAction(delete_action)
+            menu.addSeparator()
 
-        menu.addSeparator()
-
-        # Statistics action
+        # Statistics action (available for all types)
         stats_action = QAction("View Statistics", self)
         stats_action.triggered.connect(lambda: self._show_statistics(data))
+
+        # Smart enable/disable: Check if there are any analyzed photos
+        has_analyzed_photos = self._check_has_analyzed_photos(data)
+        stats_action.setEnabled(has_analyzed_photos)
+        if not has_analyzed_photos:
+            stats_action.setToolTip("No analyzed photos available")
+
         menu.addAction(stats_action)
 
         menu.exec(self.nav_tree.viewport().mapToGlobal(position))
+
+    def _check_has_analyzed_photos(self, data) -> bool:
+        """Check if the item has any analyzed photos"""
+        try:
+            data_type = data.get('type')
+
+            if data_type == 'subfolder':
+                # For subfolders, check if folder path has analyzed photos
+                album_id = data.get('album_id')
+                folder_path = data.get('folder_path')
+                if not album_id or not folder_path:
+                    return False
+
+                # Quick count query
+                import os
+                folder_path = os.path.abspath(folder_path)
+                if not folder_path.endswith(os.sep):
+                    folder_path += os.sep
+
+                cursor = self.db.conn.cursor()
+                cursor.execute("""
+                    SELECT COUNT(*) 
+                    FROM analysis_results ar
+                    JOIN album_photos ap ON ar.photo_id = ap.photo_id
+                    JOIN photos p ON ar.photo_id = p.id
+                    WHERE ap.album_id = ? 
+                        AND ar.face_detected = 1
+                        AND p.file_path LIKE ?
+                    LIMIT 1
+                """, (album_id, folder_path + '%'))
+                count = cursor.fetchone()[0]
+                return count > 0
+
+            else:
+                # For albums and folders, use album_id
+                album_id = data.get('id')
+                if not album_id:
+                    return False
+
+                cursor = self.db.conn.cursor()
+                cursor.execute("""
+                    SELECT COUNT(*) 
+                    FROM analysis_results ar
+                    JOIN album_photos ap ON ar.photo_id = ap.photo_id
+                    WHERE ap.album_id = ? AND ar.face_detected = 1
+                    LIMIT 1
+                """, (album_id,))
+                count = cursor.fetchone()[0]
+                return count > 0
+
+        except Exception as e:
+            logger.error(f"Error checking analyzed photos: {e}")
+            return False  # Safe default: disable if we can't check
+
 
     def _create_new_album(self):
         """Create a new album"""
@@ -2750,23 +2811,56 @@ class CC_MainWindow(QMainWindow):
             f"Analyzed {len(results)} photos\nSuccess: {success_count}\nFailed: {len(results) - success_count}")
 
     def _show_statistics(self, data):
-        """Show advanced statistics for album"""
-        detailed_stats = self.db.get_album_detailed_statistics(data['id'])
+        """Show advanced statistics for album, folder, or subfolder"""
+        try:
+            data_type = data.get('type')
 
-        if not detailed_stats or len(detailed_stats) == 0:
-            QMessageBox.information(self, f"Album: {data['name']}",
-                "No analysis data available.\n\nPlease analyze some photos first.")
-            return
+            # Get statistics based on item type
+            if data_type == 'subfolder':
+                # For subfolders, get statistics for that specific folder path
+                album_id = data.get('album_id')
+                folder_path = data.get('folder_path')
+                display_name = data.get('name', folder_path)
 
-        logger.info(f"Retrieved {len(detailed_stats)} records from database")
+                # Validate inputs
+                if not album_id or not folder_path:
+                    QMessageBox.warning(self, "Error",
+                        "Invalid subfolder data.\n\nPlease try reloading the folder album.")
+                    return
 
-        # Determine current theme state
-        is_dark = self._is_current_theme_dark()
+                detailed_stats = self.db.get_subfolder_detailed_statistics(album_id, folder_path)
+            else:
+                # For albums and folder albums, get all statistics
+                album_id = data.get('id')
+                display_name = data.get('name', 'Album')
 
-        from CC_StatisticsWindow import CC_StatisticsWindow
-        stats_window = CC_StatisticsWindow(data['name'], detailed_stats, db=self.db, is_dark=is_dark)
-        stats_window.show()
-        self.stats_window = stats_window
+                # Validate inputs
+                if not album_id:
+                    QMessageBox.warning(self, "Error",
+                        "Invalid album data.\n\nPlease try reloading the navigator.")
+                    return
+
+                detailed_stats = self.db.get_album_detailed_statistics(album_id)
+
+            if not detailed_stats or len(detailed_stats) == 0:
+                QMessageBox.information(self, f"Statistics: {display_name}",
+                    "No analysis data available.\n\nPlease analyze some photos first.")
+                return
+
+            logger.info(f"Retrieved {len(detailed_stats)} records for {display_name}")
+
+            # Determine current theme state
+            is_dark = self._is_current_theme_dark()
+
+            from CC_StatisticsWindow import CC_StatisticsWindow
+            stats_window = CC_StatisticsWindow(display_name, detailed_stats, db=self.db, is_dark=is_dark)
+            stats_window.show()
+            self.stats_window = stats_window
+
+        except Exception as e:
+            logger.error(f"Error showing statistics: {e}", exc_info=True)
+            QMessageBox.critical(self, "Error",
+                f"Failed to load statistics:\n\n{str(e)}\n\nCheck the log for details.")
 
     def _show_visualization(self):
         """Show 3D visualization - with lazy loading of image and mask"""

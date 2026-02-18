@@ -515,6 +515,57 @@ class CC_Database:
         """, (album_id,))
         return [dict(row) for row in cursor.fetchall()]
 
+    def get_subfolder_detailed_statistics(self, album_id: int, folder_path: str) -> List[Dict]:
+        """Get detailed statistics for photos in a specific subfolder (and its subdirectories)"""
+        import os
+        cursor = self.conn.cursor()
+
+        # Normalize the folder path (ensure it ends with separator for matching)
+        # Convert to absolute path and ensure trailing separator
+        folder_path = os.path.abspath(folder_path)
+        if not folder_path.endswith(os.sep):
+            folder_path += os.sep
+
+        # For matching subdirectories, we need to check if file_path starts with folder_path
+        # SQL LIKE pattern: /path/to/folder/%
+        # This will match all files in the folder and its subdirectories
+
+        cursor.execute("""
+            SELECT 
+                p.file_name as photo_name,
+                p.file_path,
+                ar.hue_mean,
+                ar.hue_std,
+                ar.saturation_mean,
+                ar.lightness_mean,
+                ar.lightness_low,
+                ar.lightness_mid,
+                ar.lightness_high,
+                ar.hue_very_red,
+                ar.hue_red_orange,
+                ar.hue_normal,
+                ar.hue_yellow,
+                ar.hue_very_yellow,
+                ar.hue_abnormal,
+                ar.sat_very_low,
+                ar.sat_low,
+                ar.sat_normal,
+                ar.sat_high,
+                ar.sat_very_high,
+                ar.num_points,
+                ar.mask_coverage,
+                ar.analyzed_at
+            FROM analysis_results ar
+            JOIN album_photos ap ON ar.photo_id = ap.photo_id
+            JOIN photos p ON ar.photo_id = p.id
+            WHERE ap.album_id = ? 
+                AND ar.face_detected = 1
+                AND p.file_path LIKE ?
+            ORDER BY ar.analyzed_at DESC
+        """, (album_id, folder_path + '%'))
+        return [dict(row) for row in cursor.fetchall()]
+
+
     def get_project_statistics(self, project_id: int) -> Dict:
         """Get aggregated statistics for a project"""
         cursor = self.conn.cursor()
